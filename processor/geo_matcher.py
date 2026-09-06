@@ -200,22 +200,39 @@ class GeoMatcher:
             keep_l.append(l)
         return keep_t, keep_l
 
-    # POS-теги pymorphy3, допустимые для гео-кандидатов.
-    # NPRO + is_proper: pymorphy3 часто тегает OOV-пропера как местоимения
-    # Фильтруем ТОЛЬКО то, что pymorphy3 УВЕРЕННО опознал как НЕ-топоним
-    # (глаголы, наречия, предлоги). OOV/NPRO/GRND пропускаем — pymorphy3
-    # использует GRND как fallback для неизвестных слов («Гаванная»→GRND).
-    _BLOCKED_POS = frozenset({'VERB', 'ADVB', 'PREP', 'INTJ', 'CONJ', 'PRCL', 'INFN', 'PRTF', 'PRTS'})
+    # POS-теги pymorphy3, допустимые для гео-кандидатов (TASK 1).
+    # Канонический источник истины — morphology._NON_GEO_POS (дубликат здесь:
+    # тесты грузят geo_matcher со стабом morphology без этого символа).
+    # VERB, INFN, ADVB, INTJ, PRCL, CONJ, PRED, COMP, GRND — исключаются.
+    # Отличие от старого набора: PRTF/PRTS СОХРАНЕНЫ (могут быть частью
+    # топонима), PREP убран (предлоги вырезаются раньше как границы
+    # сегментов, а не как «не-кандидаты»). NPRO/UNKN/пустой POS пропускаем —
+    # pymorphy3 тегает OOV-пропера как NPRO/GRND («Гаванная»→GRND),
+    # а UNKN — гарантированный OOV.
+    _BLOCKED_POS = frozenset({
+        'VERB', 'INFN', 'ADVB', 'INTJ', 'PRCL', 'CONJ', 'PRED', 'COMP', 'GRND',
+    })
 
     def _candidates_sliding_window(
         self, clean_tokens: List[Token], clean_stems: List[str],
         clean_lemmas: Optional[List['Lemma']] = None,
         max_window: Optional[int] = None,
     ) -> List[Candidate]:
-        """Генерация N-грамм с предфильтрацией: начинаем только с якорей.
+        """Генерация N-грамм с сегментацией по предлогам (TASK 1) и POS-guard.
 
-        Если enable_pos_filter=True, окна целиком состоящие из глаголов/
-        наречий/предлогов отбрасываются — они не могут быть топонимами.
+        Сегментация: предлоги (lemma.is_prep) вырезаются из последовательности,
+        окно НЕ склеивает токены через предлог — «повернул на Ветеранов» даёт
+        сегменты [повернул], [Ветеранов], и пара «Ветеранов блокпост» не
+        склеивается через предлог. Токен сразу после предлога помечается
+        is_anchored (prepositional boost, как раньше через prev_text).
+
+        Если lemmas не переданы (compat/тесты) — старое поведение без
+        сегментации, якорь по prev_text из _LOC_PREPS.
+
+        POS-guard (TASK 1): окна, ВСЕ токены которых уверенно опознаны как
+        не-топоним (VERB/ADVB/...), отбрасываются — НО окно со стемом,
+        присутствующим в индексе (stem-rescue), сохраняется: pymorphy3 тегает
+        OOV-пропера как GRND/NPRO, и стем-совпадение надёжнее POS-гипотезы.
         """
         if max_window is None:
             max_window = (
@@ -227,26 +244,54 @@ class GeoMatcher:
         # «11 Фонтана», и Tier 1 попадает в ключ справочника напрямую.
         sig_tokens: List[Token] = []
         sig_stems: List[str] = []
-        for t, s in zip(clean_tokens, clean_stems):
+        sig_lemmas: List['Lemma'] = []
+        for i, (t, s) in enumerate(zip(clean_tokens, clean_stems)):
             if (t.text or '').strip().lower() in _NOISE_TOKENS:
                 continue
             sig_tokens.append(t)
             sig_stems.append(s)
+            if clean_lemmas is not None and i < len(clean_lemmas):
+                sig_lemmas.append(clean_lemmas[i])
         clean_tokens, clean_stems = sig_tokens, sig_stems
-        # POS-filter: разрешённые позиции для начала окна
+        if clean_lemmas is not None:
+            clean_lemmas = sig_lemmas
+
         pos_enabled = (
             settings.similarity.enable_pos_filter
             if settings and settings.similarity else True
         )
         if not clean_tokens:
             return []
+
+        # Сегментация по предлогам (TASK 1): сегмент = макс. последовательность
+        # токенов без предлогов. seg_id[i] — номер сегмента токена i;
+        # anchored[i] — токен стоит сразу после предлога.
+        seg_of = [0] * len(clean_tokens)
+        anchored = [False] * len(clean_tokens)
+        if clean_lemmas is not None and len(clean_lemmas) == len(clean_tokens):
+            seg = 0
+            prev_is_prep = False
+            for i, lemma in enumerate(clean_lemmas):
+                if lemma.is_prep:
+                    seg += 1
+                    prev_is_prep = True
+                    continue
+                seg_of[i] = seg
+                anchored[i] = prev_is_prep
+                prev_is_prep = False
+        else:
+            clean_lemmas = None  # длины не сошлись — POS-логика отключается
+
         out = []
         seen: Set[Tuple[int, int]] = set()
         n = len(clean_tokens)
         for start_i in range(n):
+            # Предлог не начинает окно (он граница, а не кандидат).
+            if clean_lemmas is not None and clean_lemmas[start_i].is_prep:
+                continue
             current_stem = clean_stems[start_i]
             prev_text = clean_tokens[start_i - 1].text.lower() if start_i > 0 else ''
-            is_anchored = prev_text in _LOC_PREPS
+            is_anchored = anchored[start_i] or prev_text in _LOC_PREPS
 
             # Предфильтр-якорь: пропускаем позицию, если её одиночный токен не
             # может быть началом матча. Помимо точного стема учитываем:
@@ -262,7 +307,17 @@ class GeoMatcher:
                     and len(clean_tokens[start_i].text) < 5):
                 continue
 
-            for end_i in range(start_i, min(start_i + max_window, n)):
+            # Окна растут ВНУТРИ сегмента: end не переходит через предлог
+            # и не ЗАКАНЧИВАЕТСЯ на предлоге (окно не содержит предлог вовсе).
+            seg = seg_of[start_i]
+            max_end = start_i
+            while max_end < n - 1 \
+                    and seg_of[max_end + 1] == seg \
+                    and not (clean_lemmas is not None and clean_lemmas[max_end + 1].is_prep) \
+                    and max_end - start_i + 1 < max_window:
+                max_end += 1
+
+            for end_i in range(start_i, max_end + 1):
                 if (start_i, end_i) in seen:
                     continue
                 seen.add((start_i, end_i))
@@ -270,17 +325,24 @@ class GeoMatcher:
                 slice_s = clean_stems[start_i:end_i + 1]
                 surface_text = ' '.join(t.text.lower() for t in slice_t)
                 stem_tuple = tuple(s for s in slice_s if s)
-                # POS-guard: пропускаем окна, состоящие целиком из
-                # ТОЧНО опознанных как НЕ-топоним (VERB, ADVB, PREP...).
-                # OOV/NPRO/пустой POS пропускаем — не рискуем потерять топоним.
+                # POS-guard (TASK 1): окно из ТОЧНО опознанных не-топонимов
+                # (VERB, ADVB, GRND...) отбрасывается, ЕСЛИ ни один его стем
+                # не присутствует в индексе (stem-rescue) — иначе теряли бы
+                # OOV-пропера вроде «героив» (GRND), матчащиеся по стему.
                 if pos_enabled and clean_lemmas is not None:
                     slice_l = clean_lemmas[start_i:end_i + 1]
                     if slice_l and all(
                         lemma.pos in self._BLOCKED_POS
                         for lemma in slice_l if lemma.pos
+                    ) and not any(
+                        s and (self._index.has_stem(s)
+                               or self._index.has_stem_anywhere(s))
+                        for s in stem_tuple
                     ):
                         continue
-                out.append((surface_text, stem_tuple, start_i, end_i, end_i - start_i + 1, False, is_anchored))
+                size = end_i - start_i + 1
+                out.append((surface_text, stem_tuple, start_i, end_i, size,
+                            False, is_anchored, seg))
         return out
 
     async def _link_span_tier1(self, surface: str, stems: Tuple[str, ...], span: Tuple[int, int]) -> Optional[Dict]:
@@ -390,7 +452,13 @@ class GeoMatcher:
         return "none"
 
     def _finalize(self, best_by_geo: Dict[int, Dict]) -> List[Dict]:
-        """Дедупликация, сортировка и возврат top-K найденных geo-объектов."""
+        """Дедупликация, сортировка и возврат top-K найденных geo-объектов.
+
+        Longest-match-first (TASK 2): под-спан, вложенный в более длинный матч,
+        отбрасывается — НО только внутри одного сегмента (токены разных
+        сегментов разделены предлогом и не могут быть частью одного имени).
+        Итог сортируется по score, при равенстве — длинный матч выше.
+        """
         top_k = (
             settings.similarity.max_entities if settings and settings.similarity else 5
         )
@@ -399,14 +467,21 @@ class GeoMatcher:
                         key=lambda x: (x['_span'][1] - x['_span'][0], x['score']),
                         reverse=True):
             s, e = r['_span']
-            if any(ks <= s and e <= ke and (ke - ks) > (e - s)
+            seg = r.get('_segment', -1)
+            if any(k.get('_segment', -1) == seg
+                   and ks <= s and e <= ke and (ke - ks) > (e - s)
                    for k in kept for (ks, ke) in (k['_span'],)):
                 continue
             kept.append(r)
 
-        results = sorted(kept, key=lambda x: x['score'], reverse=True)[:top_k]
+        results = sorted(
+            kept,
+            key=lambda x: (x['score'], x['_span'][1] - x['_span'][0]),
+            reverse=True,
+        )[:top_k]
         for r in results:
             r.pop('_span', None)
+            r.pop('_segment', None)
             r['type'] = self._geo_types.get(r['geo_id'], '')
         source_stats = {}
         for r in results:
@@ -460,13 +535,26 @@ class GeoMatcher:
 
         s_phrases, s_meta = self._index.surface_phrases()
 
-        for surface, stem_tuple, start_i, end_i, _size, _gap, is_anchored in candidates:
+        # Tier-1 length-floor (TASK 2): чем длиннее совпавшая n-грамма, тем
+        # меньше штраф поверх fuzz-скора — стем-матч уже нормализовал падеж,
+        # а fuzz по surface не должен опускать верный матч ниже
+        # candidate_min_score. Считается один раз вне цикла.
+        max_w = (
+            settings.similarity.max_sliding_window
+            if settings and settings.similarity else 3
+        )
+        for surface, stem_tuple, start_i, end_i, _size, _gap, is_anchored, seg in candidates:
             if surface in self._stopwords:
                 continue
 
             result = await self._link_span_tier1(surface, stem_tuple, (start_i, end_i))
             if result:
                 result['_anchored'] = is_anchored
+                result['_segment'] = seg
+                # Стем-матч — падежная нормализация: floor компенсирует fuzz-
+                # штраф поверх surface-варианта (французского→Французский).
+                floor = 1.0 - 0.02 * (max_w - min(_size, max_w))
+                result['score'] = max(result['score'], floor)
                 gid = result['geo_id']
                 existing = best_by_geo.get(gid)
                 if existing is None or result['score'] > existing['score']:
@@ -478,6 +566,7 @@ class GeoMatcher:
                         'surface': surface,
                         'span': (start_i, end_i),
                         'is_anchored': is_anchored,
+                        'segment': seg,
                     })
 
         if tier2_queries:
@@ -534,6 +623,7 @@ class GeoMatcher:
                             'source': 'surface_typo',
                             '_span': meta['span'],
                             '_anchored': meta['is_anchored'],
+                            '_segment': meta.get('segment', -1),
                         }
                         gid = result['geo_id']
                         existing = best_by_geo.get(gid)

@@ -6,7 +6,7 @@ CREATE OR REPLACE FUNCTION process_candidates_v2(
     p_hint               VARCHAR     DEFAULT NULL,
     p_score_threshold    DOUBLE PRECISION DEFAULT 0.80,
     p_intersection_buffer_m DOUBLE PRECISION DEFAULT 100.0,
-    p_max_scatter_m      DOUBLE PRECISION DEFAULT 1000.0
+    p_max_scatter_m      DOUBLE PRECISION DEFAULT 500.0
 )
 RETURNS TABLE (
     result_strategy      TEXT,
@@ -213,11 +213,16 @@ BEGIN
             WHEN 'weighted_centroid' THEN 3 ELSE 1 END DESC, h.total_score DESC
         LIMIT 1
     ),
+    -- Single match: приоритет NLP-score (TASK 3 / Hard Constraint 4-5).
+    -- Раньше тип геометрии/длина линии решали раньше score — при scatter >
+    -- p_max_scatter_m выбирался НЕ лучший по score кандидат. Теперь:
+    -- score DESC → тип линии → длина → geo_id (стабильный tiebreak).
     best_single AS (
         SELECT c.geom, c.score AS total_score,
             jsonb_build_object('type','single_match','geo_id',c.id,'score',c.score) AS diagnostics
         FROM mc_candidates c
         ORDER BY
+            c.score DESC,
             CASE WHEN ST_GeometryType(c.geom) IN ('ST_LineString','ST_MultiLineString') THEN 2 ELSE 1 END DESC,
             ST_Length(c.geom_m) DESC, c.id ASC
         LIMIT 1

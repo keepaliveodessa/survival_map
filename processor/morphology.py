@@ -64,6 +64,16 @@ ORDINAL_MAP = {
 # Грамматические теги pymorphy3, указывающие на имя собственное / топоним.
 _PROPER_NOUN_TAGS = frozenset({'Name', 'Surn', 'Patr', 'Geox', 'Orgn'})
 
+# POS-теги, которые pymorphy3 УВЕРЕННО опознаёт как НЕ-топоним (TASK 1):
+# VERB, INFN, ADVB, INTJ, PRCL, CONJ, PRED, COMP, GRND — исключаются из матчинга.
+# СОХРАНЯЮТСЯ: NOUN, ADJF, ADJS, NUMR, PRTF, PRTS, NPRO + всё uncertain (UNKN,
+# пустой POS) — pymorphy3 ошибается на OOV-проперах (Гаванная→GRND, героив→GRND),
+# поэтому «подозрительный» тег сам по себе не выбрасывает токен: geo_matcher
+# дополнительно защищает окна, чьи стемы присутствуют в индексе (stem-rescue).
+_NON_GEO_POS = frozenset({
+    'VERB', 'INFN', 'ADVB', 'INTJ', 'PRCL', 'CONJ', 'PRED', 'COMP', 'GRND',
+})
+
 
 @dataclass
 class Lemma:
@@ -72,6 +82,7 @@ class Lemma:
     normal_form: str     # нормальная форма (или цифра для порядкового числительного)
     pos: str             # NOUN, ADJF, VERB, PREP, ...
     is_proper: bool      # имя собственное / топоним
+    is_prep: bool = False  # предлог (хотя бы один разбор PREP) — граница окна
 
 
 class _HasText(Protocol):
@@ -140,22 +151,23 @@ class Morphology:
         if cached is not None:
             self._lemma_cache.move_to_end(key)
             # Surface берём от исходного слова — регистр может отличаться
-            return Lemma(word, cached.normal_form, cached.pos, cached.is_proper)
+            return Lemma(word, cached.normal_form, cached.pos,
+                         cached.is_proper, cached.is_prep)
 
         if word.isdigit():
-            result = Lemma(word, word, 'NUMR', False)
+            result = Lemma(word, word, 'NUMR', False, False)
             self._cache_store(key, result)
             return result
 
         m = _DIGIT_ORDINAL_RE.match(word)
         if m:
-            result = Lemma(word, m.group(1), 'NUMR', False)
+            result = Lemma(word, m.group(1), 'NUMR', False, False)
             self._cache_store(key, result)
             return result
 
         parses = self._morph.parse(word)
         if not parses:
-            result = Lemma(word, key, '', False)
+            result = Lemma(word, key, '', False, False)
             self._cache_store(key, result)
             return result
 
@@ -167,12 +179,18 @@ class Morphology:
         if 'Anum' in best.tag:
             digit = ORDINAL_MAP.get(normal)
             if digit:
-                result = Lemma(word, digit, 'NUMR', False)
+                result = Lemma(word, digit, 'NUMR', False, False)
                 self._cache_store(key, result)
                 return result
 
         is_proper = any(tag in best.tag for tag in _PROPER_NOUN_TAGS)
-        result = Lemma(word, normal, pos, is_proper)
+        # Предлог (TASK 1): PREP среди ЛЮБЫХ разборов — надёжный маркер («в», «с»,
+        # «по» имеют омонимичные NOUN-разборы как аббревиатуры, но PREP-разбор
+        # всегда присутствует). Используется как граница скользящего окна.
+        is_prep = any(
+            p.tag.POS is not None and str(p.tag.POS) == 'PREP' for p in parses
+        )
+        result = Lemma(word, normal, pos, is_proper, is_prep)
         self._cache_store(key, result)
         return result
 
@@ -185,6 +203,44 @@ class Morphology:
     def lemmatize_tokens(self, tokens: Iterable[_HasText]) -> List[Lemma]:
         """Лемматизирует последовательность токенов (объекты с .text)."""
         return [self.lemmatize_word(t.text) for t in tokens]
+
+    def is_preposition(self, word: str) -> bool:
+        """Является ли слово предлогом (TASK 1: граница скользящего окна).
+
+        Надёжно и для омографов: «в»/«с»/«по» имеют омонимичные NOUN-разборы
+        (аббревиатуры), но PREP-разбор присутствует всегда. Кэш — через
+        lemmatize_word (LRU), отдельного кэша не нужно.
+        """
+        if not word:
+            return False
+        return self.lemmatize_word(word).is_prep
+
+    @staticmethod
+    def is_geo_candidate(lemma: Lemma) -> bool:
+        """Может ли лемма быть частью топонима (TASK 1: POS-фильтрация).
+
+        Исключаются только токены, которые pymorphy3 уверенно опознал как
+        не-топоним (VERB/INFN/ADVB/INTJ/PRCL/CONJ/PRED/COMP/GRND).
+        UNKN/пустой POS (OOV-пропера) и разрешённые теги (NOUN, ADJF, ADJS,
+        NUMR, PRTF, PRTS, NPRO) — кандидаты. Предлоги отсекаются отдельно
+        (is_prep) как границы окна, а не как «не-кандидаты».
+        """
+        return lemma.pos not in _NON_GEO_POS
+
+    def shrink_cache(self, max_size: int = 5000) -> None:
+        """Урезание LRU-кэшей до max_size записей (R-PR4 memory fallback)."""
+        caps = (
+            (self._lemma_cache, max_size),
+            (self._phrase_cache, min(max_size, self._PHRASE_CACHE_MAX)),
+            (self._stem_cache, max_size),
+        )
+        for cache, cap in caps:
+            while len(cache) > cap:
+                cache.popitem(last=False)
+
+    def cache_size(self) -> int:
+        """Суммарный размер всех LRU-кэшей (для heartbeat)."""
+        return len(self._lemma_cache) + len(self._phrase_cache) + len(self._stem_cache)
 
     def lemmatize_words(self, words: Iterable[str]) -> List[Lemma]:
         """Лемматизирует последовательность строк."""

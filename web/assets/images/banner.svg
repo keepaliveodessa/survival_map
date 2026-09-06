@@ -1,14 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 330">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 440 330">
   <!-- Background -->
   <rect width="440" height="330" fill="#2C2C2C"/>
+  <!-- QR Code -->
+  <image x="120" y="45" width="200" height="200" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAEsAQMAAABDsxw2AAAABlBMVEX///8AAABVwtN+AAAACXBIWXMAAA7EAAAOxAGVKw4bAAABiUlEQVRoge2aTa6DMAyEjbrokiNwFI5Gj8ZROAJLFlX94r8Q0b5dpcbSjCKVJh+rIY7jhOirmjm0E40sbdK/21BHeAXWB3a4a8tOpUOeBHsRDWVUdQOWDltK9yFY8T1MN+ymvgNLjDXWKwwsPyYalSy+A8uMnSFam7u//R/JgXWOcSgwAaxVAesDu2pkB7a3IWBJMLfeIrB+AJ73Ti+an96AJcQed35Q3Z9q0lutB5YOq6YznwkSq/vGzHymUsAyYEWLpUnqe5MjuemWIwFLhM3metQcSq/7Pumvb2eA9YEd4qnYatUhbmJvu54CS4XRXdZTl+xlIk2Sz+IM0cAyYeSx1wOv+T7pWytdag7A0mBqvZHyVAsOq6+5wBJhrdhX3lpzuMl0fhOwzrGZQ2b6HlXcTYvzl4wL2G+xiL1LvZkgGq6eAkuFLXyeeF61OgksK1YPsi382lzmpo4ELCO2kx9hbzaN+cMFBmDdYzVEm89RyDU9P14eA9Y1VjtsLnveG7VBE7BU2Ff1BwOKZx2iQxoeAAAAAElFTkSuQmCC"/>
   <!-- Text -->
   <text
-    x="220" y="175"
+    x="220" y="270"
     font-family="'Courier New', Courier, monospace"
-    font-size="34"
+    font-size="20"
     font-weight="normal"
     fill="#CCCCCC"
     text-anchor="middle"
     letter-spacing="2"
-  >keep alive Odessa</text>
+  >t.me/keep_alive_odessa</text>
 </svg>

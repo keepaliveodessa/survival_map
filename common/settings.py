@@ -193,10 +193,12 @@ class SimilarityConfig:
     midpoint_types: tuple = ('street', 'market', 'station', 'park', 'landmark')
 
     # Включить POS-фильтрацию (pymorphy3) для sliding-window кандидатов.
-    # По умолчанию ВЫКЛ: pymorphy3 тегает OOV-пропера как VERB/GRND/NPRO,
-    # что вызывает false negatives для топонимов. Включать ТОЛЬКО если geo-таблица
-    # состоит из слов из словаря pymorphy3.
-    enable_pos_filter: bool = False
+    # Безопасно ВКЛ (TASK 1): фильтр отбрасывает окно только если ВСЕ его токены
+    # уверенно опознаны как не-топоним (VERB/ADVB/GRND/...), при условии что ни
+    # один стем окна не присутствует в geo-индексе (stem-rescue). OOV-пропера
+    # (Гаванная→GRND, героив→GRND) спасаются стем-совпадением; UNKN/пустой POS
+    # всегда проходят. Предлоги вообще не доходят до фильтра — они границы окон.
+    enable_pos_filter: bool = True
 
     # Токены-пунктуация: отфильтровываются из tokens до поиска (_strip_noise).
     punctuation_tokens: tuple = (
@@ -222,9 +224,10 @@ class GeoConfig:
     # ST_DWithin(geom_a, geom_b, buffer_m). Одинаков для Point, LineString, Polygon.
     intersection_buffer_m: float = 100.0
 
-    # Максимальный scatter (метры) для weighted_centroid.
-    # Если scatter > этого значения, гипотеза отклоняется → fallback на single_match.
-    weighted_centroid_max_scatter_m: float = 1000.0
+    # Максимальный scatter (метры) для weighted_centroid (TASK 3 / Hard Constraint 5).
+    # Если scatter > этого значения, гипотеза отклоняется → процесс_candidates_v2
+    # выбирает single_match с максимальным score, вместо точки посередине.
+    weighted_centroid_max_scatter_m: float = 500.0
 
 
 @dataclass

@@ -10,10 +10,23 @@ ROOT = Path(__file__).resolve().parent.parent
 def _load_geo_matcher():
     """Загрузка geo_matcher с относительными импортами через стабы пакета.
 
+    Если настоящий processor.morphology уже импортирован другим тестом —
+    импортируем настоящий geo_matcher напрямую: подмена morph.Lemma = object
+    на живом модуле глобально ломала Lemma(...) в последующих тестах
+    (порядкозависимые TypeError: object() takes no parameters).
+
     Тяжёлые зависимости (pymorphy3 и т.п.) не нужны — Tier-2 функции тестируем
-    изолированно; morphology/phonetic_index подставляются стабами. После загрузки
+    изолированно; morphology/phonetic_index подставляются стабами (fallback,
+    когда processor ещё не импортирован и стабы безопасны). После загрузки
     sys.modules восстанавливается, чтобы не задеть другие тесты.
     """
+    if "processor.morphology" in sys.modules:
+        try:
+            import processor.geo_matcher as real_mod
+            return real_mod
+        except ImportError:
+            pass  # тяжёлые зависимости недоступны — стаб-путь ниже
+
     names = ("processor", "processor.morphology", "processor.phonetic_index",
              "processor.word_tokenizer", "processor.geo_matcher")
     saved = {n: sys.modules.get(n) for n in names}
