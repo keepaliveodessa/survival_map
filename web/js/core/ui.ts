@@ -19,16 +19,16 @@ interface GLMap {
     once(event: string, fn: () => void): void;
 }
 
-// Скрывает все текстовые слои (type: symbol) в уже загруженном MapLibre GL стиле.
+// Общий шаг для light/dark тем: скрыть все текстовые слои (type: symbol).
 // try/catch: getStyle() может упасть если карта ещё не полностью инициализирована
 // во время первого render-цикла (initGL → onAdd → setStyle).
-function hideMaplibreLabels(glMap: GLMap): void {
+function _hideSymbolLayers(glMap: GLMap): void {
     try {
         const style = glMap.getStyle();
         if (!style || !style.layers) return;
         style.layers
-            .filter(function(l: Record<string, unknown>) { return l.type === 'symbol'; })
-            .forEach(function(l: Record<string, unknown>) {
+            .filter((l: Record<string, unknown>) => l.type === 'symbol')
+            .forEach((l: Record<string, unknown>) => {
                 try {
                     glMap.setLayoutProperty(l.id as string, 'visibility', 'none');
                 } catch (_e) { /* layer not ready */ }
@@ -36,19 +36,17 @@ function hideMaplibreLabels(glMap: GLMap): void {
     } catch (_e) { /* map style not loaded yet */ }
 }
 
+// Скрывает все текстовые слои в уже загруженном MapLibre GL стиле (light-тема).
+function hideMaplibreLabels(glMap: GLMap): void {
+    _hideSymbolLayers(glMap);
+}
+
 function _applyDarkTheme(glMap: GLMap): void {
+    _hideSymbolLayers(glMap);
     try {
         const style = glMap.getStyle();
         if (!style || !style.layers) return;
         const layers = style.layers;
-
-        layers
-            .filter(l => l.type === 'symbol')
-            .forEach(l => {
-                try {
-                    glMap.setLayoutProperty(l.id as string, 'visibility', 'none');
-                } catch (_e) { /* ignore */ }
-            });
 
         layers.forEach(layer => {
             const id = ((layer.id as string) || '').toLowerCase();
@@ -99,6 +97,21 @@ function _applyThemeToGLMap(glMap: GLMap, theme?: string): void {
     } else {
         glMap.once('load', () => glMap.once('idle', apply));
     }
+}
+
+// Helper: создать MapLibre GL слой, добавить на карту и применить тему.
+// Общий для switchTileLayer и initializeMap — раньше triple-копипаста
+// «maplibreGL → addTo → isStyleLoaded/once('load')» расходилась при правках.
+function _addMaplibreLayer(map: L.Map, style: string, theme?: string): L.Layer {
+    const layer = (L as unknown as { maplibreGL: (opts: { style: string }) => L.Layer }).maplibreGL({ style });
+    layer.addTo(map);
+    const glMap = (layer as unknown as { getMaplibreMap: () => GLMap }).getMaplibreMap();
+    if (glMap.isStyleLoaded()) {
+        _applyThemeToGLMap(glMap, theme);
+    } else {
+        glMap.once('load', () => _applyThemeToGLMap(glMap, theme));
+    }
+    return layer;
 }
 
 // Доступные тайлы карт
@@ -201,15 +214,7 @@ window.switchTileLayer = function(tileKey: string): void {
             })();
         }
     } else if (provider.type === 'maplibre') {
-        const newLayer = (L as unknown as { maplibreGL: (opts: { style: string }) => L.Layer }).maplibreGL({ style: (provider as TileProviderMaplibre).style });
-        newLayer.addTo(map);
-        currentTileLayer = newLayer;
-        const glMap = (newLayer as unknown as { getMaplibreMap: () => GLMap }).getMaplibreMap();
-        if (glMap.isStyleLoaded()) {
-            _applyThemeToGLMap(glMap, (provider as TileProviderMaplibre).theme);
-        } else {
-            glMap.once('load', () => _applyThemeToGLMap(glMap, (provider as TileProviderMaplibre).theme));
-        }
+        currentTileLayer = _addMaplibreLayer(map, (provider as TileProviderMaplibre).style, (provider as TileProviderMaplibre).theme);
     } else {
         const newLayer = L.tileLayer((provider as TileProviderOSM).url, { minZoom: 11, maxZoom: 19, ...(provider as TileProviderOSM).options });
         newLayer.addTo(map);
@@ -259,15 +264,7 @@ window.initializeMap = function(): void {
     const provider = TILE_PROVIDERS[currentTileKey];
     if (provider.type === 'local') {
         const vectorLightProvider = TILE_PROVIDERS['vector-light'] as TileProviderMaplibre;
-        const placeholderLayer = (L as unknown as { maplibreGL: (opts: { style: string }) => L.Layer }).maplibreGL({ style: vectorLightProvider.style });
-        placeholderLayer.addTo(map);
-        currentTileLayer = placeholderLayer;
-        const glMap = (placeholderLayer as unknown as { getMaplibreMap: () => GLMap }).getMaplibreMap();
-        if (glMap.isStyleLoaded()) {
-            _applyThemeToGLMap(glMap, vectorLightProvider.theme);
-        } else {
-            glMap.once('load', () => _applyThemeToGLMap(glMap, vectorLightProvider.theme));
-        }
+        currentTileLayer = _addMaplibreLayer(map, vectorLightProvider.style, vectorLightProvider.theme);
 
         // Local vector basemap — load async, swap placeholder when ready
         (async () => {
@@ -298,14 +295,7 @@ window.initializeMap = function(): void {
             }
         })();
     } else if (provider.type === 'maplibre') {
-        currentTileLayer = (L as unknown as { maplibreGL: (opts: { style: string }) => L.Layer }).maplibreGL({ style: (provider as TileProviderMaplibre).style });
-        currentTileLayer.addTo(map);
-        const glMap = (currentTileLayer as unknown as { getMaplibreMap: () => GLMap }).getMaplibreMap();
-        if (glMap.isStyleLoaded()) {
-            _applyThemeToGLMap(glMap, (provider as TileProviderMaplibre).theme);
-        } else {
-            glMap.once('load', () => _applyThemeToGLMap(glMap, (provider as TileProviderMaplibre).theme));
-        }
+        currentTileLayer = _addMaplibreLayer(map, (provider as TileProviderMaplibre).style, (provider as TileProviderMaplibre).theme);
     } else {
         currentTileLayer = L.tileLayer((provider as TileProviderOSM).url, { minZoom: 11, maxZoom: 19, ...(provider as TileProviderOSM).options });
         currentTileLayer.addTo(map);

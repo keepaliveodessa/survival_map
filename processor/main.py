@@ -16,7 +16,6 @@ from typing import Optional
 import asyncpg
 
 from common.settings import settings
-from common.db.base import RETRYABLE_EXCEPTIONS as _TRANSIENT_ERRORS
 from common.logging_config import setup_logging
 from common.circuit_breaker import CircuitBreaker, CircuitState
 from common.retry import retry_with_backoff
@@ -33,7 +32,7 @@ from .geo_matcher import GeoMatcher
 from .health import HealthServer
 from .layer_classifier import LayerClassifier
 from .word_tokenizer import tokenize
-from common.text_preprocessor import strip_tail, is_promotional, truncate_for_geo
+from common.text_preprocessor import is_promotional, truncate_for_geo
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +46,11 @@ _STALE_PROCESSING_INTERVAL = timedelta(minutes=5)
 _CLEANER_INTERVAL = 60.0
 
 
-_INSERT_EVENT_SIMPLE = """
-    WITH inserted AS (
-        INSERT INTO events
-            (message_id, event_time, description, photo_url,
-             layer, strategy, geom, matches)
-        VALUES ($1, $2, $3, $4, $5, $6, ST_GeomFromText($7, 4326), '[]'::jsonb)
-        ON CONFLICT (message_id, event_time) DO NOTHING
-        RETURNING id, event_time, geom, layer, strategy, description,
-                  photo_url, matches
-    ),
+# Общий хвост обоих INSERT-запросов: инкремент events_meta и pg_notify.
+# Держится в одном месте — раньше блок дублировался в двух запросах и разъезжался.
+# R-DB0: minimal payload to stay well under pg_notify 8KB limit.
+# Core fetches full Feature via targeted SELECT or CacheManager.
+_INSERT_TAIL = """
     meta_upd AS (
         UPDATE events_meta
         SET version = version + 1,
@@ -66,8 +60,6 @@ _INSERT_EVENT_SIMPLE = """
         RETURNING 1
     ),
     notify_call AS (
-        -- R-DB0: minimal payload to stay well under pg_notify 8KB limit.
-        -- Core fetches full Feature via targeted SELECT or CacheManager.
         SELECT pg_notify(
             'events_new',
             jsonb_build_object(
@@ -83,7 +75,20 @@ _INSERT_EVENT_SIMPLE = """
          (SELECT count(*) FROM notify_call) _force_notify
 """
 
-_INSERT_EVENT_FROM_CANDIDATES = """
+_INSERT_EVENT_SIMPLE = f"""
+    WITH inserted AS (
+        INSERT INTO events
+            (message_id, event_time, description, photo_url,
+             layer, strategy, geom, matches)
+        VALUES ($1, $2, $3, $4, $5, $6, ST_GeomFromText($7, 4326), '[]'::jsonb)
+        ON CONFLICT (message_id, event_time) DO NOTHING
+        RETURNING id, event_time, geom, layer, strategy, description,
+                  photo_url, matches
+    ),
+    {_INSERT_TAIL}
+"""
+
+_INSERT_EVENT_FROM_CANDIDATES = f"""
     WITH pc AS (
         SELECT result_strategy, result_geom, result_matches,
                result_confidence, result_diagnostics
@@ -105,30 +110,7 @@ _INSERT_EVENT_FROM_CANDIDATES = """
         RETURNING id, event_time, geom, layer, strategy, description,
                   photo_url, matches
     ),
-    meta_upd AS (
-        UPDATE events_meta
-        SET version = version + 1,
-            updated_at = now(),
-            max_event_id = (SELECT id FROM inserted)
-        WHERE id = 1 AND EXISTS (SELECT 1 FROM inserted)
-        RETURNING 1
-    ),
-    notify_call AS (
-        -- R-DB0: minimal payload to stay well under pg_notify 8KB limit.
-        -- Core fetches full Feature via targeted SELECT or CacheManager.
-        SELECT pg_notify(
-            'events_new',
-            jsonb_build_object(
-                'id', i.id,
-                'layer', i.layer,
-                'strategy', i.strategy
-            )::text
-        )
-        FROM inserted i
-    )
-    SELECT i.id, i.layer, i.strategy
-    FROM inserted i,
-         (SELECT count(*) FROM notify_call) _force_notify
+    {_INSERT_TAIL}
 """
 
 
@@ -229,14 +211,6 @@ class ProcessorBot:
         """Загрузка и инициализация всех NLP-компонентов (матчеры, резолверы)."""
         logger.info("Initializing NLP pipeline...")
         try:
-            sim = settings.similarity if settings and settings.similarity else None
-            if sim:
-                logger.info(
-                    f"Geo matcher settings: "
-                    f"phonetic_threshold={sim.phonetic_match_threshold}, "
-                    f"lemma_threshold={sim.entity_similarity_threshold}"
-                )
-
             logger.info("Initializing GeoMatcher + PhoneticIndex...")
             if not await self.matcher.initialize(self.db.pool):
                 logger.error("GeoMatcher initialization failed")
@@ -404,7 +378,6 @@ class ProcessorBot:
         msg_id = row['message_id']
 
         async def _try_process():
-            start_t = datetime.now(timezone.utc)
             result = await self._process_row(row)
             if result is None:
                 # expired — уже помечена внутри _process_row
@@ -412,9 +385,6 @@ class ProcessorBot:
             if result:
                 await self._mark_done(row['id'])
                 self._messages_processed += 1
-                self.health_server.record_message_processed(
-                    (datetime.now(timezone.utc) - start_t).total_seconds()
-                )
                 logger.info(
                     f"✅ Message {msg_id} processed: "
                     f"event_id={result['event_id']}, layer={result['layer']}, "
@@ -422,7 +392,6 @@ class ProcessorBot:
                 )
             else:
                 await self._mark_done(row['id'])
-                self.health_server.record_message_processed(0)
                 logger.debug(f"Message {msg_id}: duplicate or no geometry")
 
         try:
@@ -435,7 +404,6 @@ class ProcessorBot:
             )
         except Exception as e:
             self._errors += 1
-            self.health_server.record_error()
             await self._mark_error(row['id'], str(e))
             logger.error(f"Message {msg_id}: failed permanently: {e}")
 

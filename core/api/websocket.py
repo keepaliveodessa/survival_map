@@ -31,6 +31,19 @@ WS_AUTH_TIMEOUT = 5.0
 WS_MAX_MSG_BYTES = 65536
 
 
+def _json_msg(type_: str, **fields) -> str:
+    """Сериализовать server→client сообщение в JSON-строку.
+
+    Единая точка сборки исходящих WS-сообщений: раньше паттерн
+    orjson.dumps({...}).decode() повторялся 10+ раз, и каждый новый вызов
+    мог забыть .decode() (send_str принимает только str).
+    """
+    return orjson.dumps({
+        'type': type_,
+        **fields,
+    }).decode()
+
+
 class WebSocketManager:
     """Manages WebSocket connections and broadcasts individual features to clients."""
 
@@ -125,8 +138,9 @@ class WebSocketManager:
         self._ping_counters.clear()
         self._ws_subscriptions.clear()
 
-    async def _broadcast_payload(self, payload, layer: str = None) -> int:
-        """Send payload to connected clients, optionally filtered by layer subscription.
+    async def _broadcast_payload(self, payload: str, layer: str = None) -> int:
+        """Send a pre-serialized JSON string to connected clients, optionally
+        filtered by layer subscription.
 
         Optimized: snapshot connections once (fast copy), send to all clients in
         parallel without holding a lock, then batch-unregister failed connections
@@ -143,8 +157,7 @@ class WebSocketManager:
                 subscriptions = self._ws_subscriptions.get(ws, set())
                 if layer is not None and subscriptions and layer not in subscriptions:
                     return None  # Skipped by filter, not a failure
-                # payload is bytes from orjson.dumps(); decode to str for send_str
-                await asyncio.wait_for(ws.send_str(payload.decode() if isinstance(payload, bytes) else payload), timeout=SEND_TIMEOUT)
+                await asyncio.wait_for(ws.send_str(payload), timeout=SEND_TIMEOUT)
                 return None
             except Exception as e:
                 logger.debug(f"Broadcast send error/timeout: {e}")
@@ -179,22 +192,22 @@ class WebSocketManager:
         if not features or not self.connections:
             return
 
-        payload = orjson.dumps({
-            'type': 'events_snapshot',
-            'data': {
+        payload = _json_msg(
+            'events_snapshot',
+            data={
                 'type': 'FeatureCollection',
                 'features': features
             },
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        })
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
         await self._broadcast_payload(payload)
 
-        end_payload = orjson.dumps({
-            'type': 'events_snapshot_end',
-            'count': len(features),
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'channel': channel,
-        })
+        end_payload = _json_msg(
+            'events_snapshot_end',
+            count=len(features),
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            channel=channel,
+        )
         await self._broadcast_payload(end_payload)
 
     async def send_events_since(
@@ -230,10 +243,10 @@ class WebSocketManager:
 
         try:
             if resync:
-                await ws.send_str(orjson.dumps({
-                    'type': 'resync_required',
-                    'timestamp': datetime.now(timezone.utc).isoformat()
-                }).decode())
+                await ws.send_str(_json_msg(
+                    'resync_required',
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                ))
                 since_timestamp = None
                 since_id = None
                 since_message_id = None
@@ -258,14 +271,14 @@ class WebSocketManager:
             )
 
             for feature in features:
-                message = {
-                    'type': 'feature',
-                    'data': feature,
-                    'timestamp': datetime.now(timezone.utc).isoformat()
-                }
+                message = _json_msg(
+                    'feature',
+                    data=feature,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
                 try:
                     await asyncio.wait_for(
-                        ws.send_str(orjson.dumps(message).decode()), timeout=SEND_TIMEOUT
+                        ws.send_str(message), timeout=SEND_TIMEOUT
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send feature to client: {e}")
@@ -276,11 +289,11 @@ class WebSocketManager:
             # reconnect catch-up); only live pushes after it raise per-event
             # notifications.
             try:
-                await ws.send_str(orjson.dumps({
-                    'type': 'events_snapshot_end',
-                    'count': len(features),
-                    'timestamp': datetime.now(timezone.utc).isoformat()
-                }).decode())
+                await ws.send_str(_json_msg(
+                    'events_snapshot_end',
+                    count=len(features),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                ))
             except Exception as e:
                 logger.warning(f"Failed to send events_snapshot_end: {e}")
 
@@ -326,11 +339,11 @@ class WebSocketManager:
                 return
 
         layer = event_data.get('properties', {}).get('layer')
-        payload = orjson.dumps({
-            'type': 'feature',
-            'data': event_data,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        })
+        payload = _json_msg(
+            'feature',
+            data=event_data,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
 
         success = await self._broadcast_payload(payload, layer=layer)
         logger.info(f"Feature broadcasted: {success}/{len(self.connections)} clients")
@@ -340,11 +353,11 @@ class WebSocketManager:
         if not self.connections:
             return
 
-        payload = orjson.dumps({
-            'type': 'events_cleaned',
-            'data': data,
-            'timestamp': datetime.now(timezone.utc).isoformat()
-        })
+        payload = _json_msg(
+            'events_cleaned',
+            data=data,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
 
         success = await self._broadcast_payload(payload)
         logger.info(f"events_cleaned broadcasted: {success}/{len(self.connections)} clients")
@@ -453,10 +466,7 @@ async def websocket_handler(request: web.Request):
                     # Per-message size guard
                     if len(msg.data) > WS_MAX_MSG_BYTES:
                         logger.warning(f"WebSocket message too large from {request.remote}")
-                        await ws.send_str(orjson.dumps({
-                            'type': 'error',
-                            'message': 'message too large'
-                        }).decode())
+                        await ws.send_str(_json_msg('error', message='message too large'))
                         continue
 
                     data = orjson.loads(msg.data)
@@ -466,16 +476,13 @@ async def websocket_handler(request: web.Request):
                         # Rate limiting для защиты от спама
                         if not ws_manager._check_rate_limit(ws):
                             logger.warning("WebSocket ping rate limit exceeded")
-                            await ws.send_str(orjson.dumps({
-                                'type': 'error',
-                                'message': 'rate limit exceeded'
-                            }).decode())
+                            await ws.send_str(_json_msg('error', message='rate limit exceeded'))
                             continue
-                        
-                        await ws.send_str(orjson.dumps({
-                            'type': 'pong',
-                            'timestamp': datetime.now(timezone.utc).isoformat()
-                        }).decode())
+
+                        await ws.send_str(_json_msg(
+                            'pong',
+                            timestamp=datetime.now(timezone.utc).isoformat(),
+                        ))
 
                     elif message_type == 'auth':
                         # /ws исключён из jwt_auth_middleware → проверяем здесь.
@@ -486,32 +493,27 @@ async def websocket_handler(request: web.Request):
                             # сам без cancel(). Нет race condition между
                             # проверкой done() и cancel().
                             _auth_event.set()
-                            await ws.send_str(orjson.dumps({'type': 'auth_ok'}).decode())
+                            await ws.send_str(_json_msg('auth_ok'))
                         else:
                             logger.warning("WebSocket auth failed — closing connection")
-                            await ws.send_str(orjson.dumps(
-                                {'type': 'error', 'message': 'authentication failed'}
-                            ).decode())
+                            await ws.send_str(_json_msg('error', message='authentication failed'))
                             await ws.close(code=1008, message=b'auth failed')  # policy violation
                             break
 
                     elif message_type == 'subscribe_layers':
                         if not authenticated:
-                            await ws.send_str(orjson.dumps({'type': 'error', 'message': 'not authenticated'}).decode())
+                            await ws.send_str(_json_msg('error', message='not authenticated'))
                             continue
                         layers = data.get('layers') or []
                         if not isinstance(layers, list):
-                            await ws.send_str(orjson.dumps({'type': 'error', 'message': 'layers must be a list'}).decode())
+                            await ws.send_str(_json_msg('error', message='layers must be a list'))
                             continue
                         ws_manager._ws_subscriptions[ws] = set(layers)
-                        await ws.send_str(orjson.dumps({
-                            'type': 'subscribed',
-                            'layers': layers,
-                        }).decode())
+                        await ws.send_str(_json_msg('subscribed', layers=layers))
 
                     elif message_type == 'get_events':
                         if not authenticated:
-                            await ws.send_str(orjson.dumps({'type': 'error', 'message': 'not authenticated'}).decode())
+                            await ws.send_str(_json_msg('error', message='not authenticated'))
                             continue
 
                         since_timestamp = data.get('since_timestamp')  # ISO string or null

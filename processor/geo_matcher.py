@@ -78,6 +78,18 @@ def _typo_len_guard(surface: str) -> int:
         return max(3, int(0.25 * len(surface)))
     return max(2, int(0.2 * len(surface)))
 
+
+def _typo_threshold_percent() -> float:
+    """Tier-2 порог в процентах (0-100) из settings; fallback 90.0.
+
+    Единая точка для _link_span и find_geo — раньше выражение с одним и тем
+    же fallback дублировалось в обоих путях.
+    """
+    if (settings and settings.similarity
+            and getattr(settings.similarity, 'surface_typo_threshold', None) is not None):
+        return settings.similarity.surface_typo_threshold * 100
+    return 90.0
+
 _LOC_PREPS: frozenset = frozenset({
     'на', 'по', 'в', 'у', 'до',
     'від', 'біля',
@@ -184,6 +196,26 @@ class GeoMatcher:
             self._geo_types.get(entry.street_id) in ('village', 'town')
             and len(entry.canonical_name or '') <= 6
         )
+
+    def _accept_typo_match(
+        self, surface: str, cand: str, idx: int,
+        s_meta: List["PhoneticEntry"],
+    ) -> Optional["PhoneticEntry"]:
+        """Общие guard'ы Tier-2 для _link_span и батч-пути find_geo.
+
+        prefix-guard (первый символ + первые 3 символа), length-guard
+        (_typo_len_guard) и short-settlement guard. Возвращает entry индекса,
+        если матч принят, иначе None — вызывающий строит свой result-dict
+        (у путей разный набор служебных полей).
+        """
+        if not (surface[0] == cand[0]
+                and surface[:3] == cand[:3]
+                and abs(len(cand) - len(surface)) <= _typo_len_guard(surface)):
+            return None
+        entry = s_meta[idx]
+        if self._is_short_settlement(entry):
+            return None
+        return entry
 
     def _strip_noise(self, tokens: List[Token], lemmas: List[Lemma]) -> Tuple[List[Token], List[Lemma]]:
         """Удаление шумовых (пунктуационных) токенов из последовательности."""
@@ -375,7 +407,8 @@ class GeoMatcher:
         """Поиск geo-объекта по тексту: Tier 1 (стемы) → Tier 2 (опечатки).
 
         NOTE: в find_geo() Tier 2 выполняется батчем (tier2_queries), этот метод
-        используется только извне/тестами — держать guards консистентными.
+        используется только извне/тестами. Порог и guard'ы общие
+        (_typo_threshold_percent / _accept_typo_match) — пути не разъезжаются.
         """
         if not surface:
             return None
@@ -384,13 +417,8 @@ class GeoMatcher:
         if result:
             return result
 
-        # Tier 2: орфо-корректор по surface.
-        typo_thresh = (
-            settings.similarity.surface_typo_threshold * 100
-            if settings and settings.similarity
-            and getattr(settings.similarity, 'surface_typo_threshold', None) is not None
-            else 90.0
-        )
+        # Tier 2: орфо-корректор по surface (те же guard'ы, что и в батч-пути).
+        typo_thresh = _typo_threshold_percent()
         s_phrases, s_meta = self._index.surface_phrases()
         if s_phrases and len(surface) >= 5:
             if self._executor:
@@ -408,28 +436,14 @@ class GeoMatcher:
                     )
                 except (asyncio.TimeoutError, Exception) as e:
                     logger.warning(f"[Geo] Parallel fuzzy match timeout/failed: {e}, falling back to sync")
-                    s_match = rf_process.extractOne(
-                        surface,
-                        s_phrases,
-                        scorer=fuzz.WRatio,
-                        score_cutoff=typo_thresh,
-                    )
+                    s_match = _fuzzy_match(surface, s_phrases, typo_thresh)
             else:
-                s_match = rf_process.extractOne(
-                    surface,
-                    s_phrases,
-                    scorer=fuzz.ratio,
-                    score_cutoff=typo_thresh,
-                )
+                s_match = _fuzzy_match(surface, s_phrases, typo_thresh)
 
             if s_match:
                 cand, score, idx = s_match
-                if (surface[0] == cand[0]
-                        and surface[:3] == cand[:3]
-                        and abs(len(cand) - len(surface)) <= _typo_len_guard(surface)):
-                    entry = s_meta[idx]
-                    if self._is_short_settlement(entry):
-                        return None
+                entry = self._accept_typo_match(surface, cand, idx, s_meta)
+                if entry is not None:
                     return {
                         'geo_id': entry.street_id,
                         'score': score / 100.0,
@@ -570,14 +584,8 @@ class GeoMatcher:
                     })
 
         if tier2_queries:
-            typo_thresh = (
-                settings.similarity.surface_typo_threshold * 100
-                if settings and settings.similarity
-                and getattr(settings.similarity, 'surface_typo_threshold', None) is not None
-                else 90.0
-            )
+            typo_thresh = _typo_threshold_percent()
             tier2_queries = list(dict.fromkeys(tier2_queries))
-            s_phrases, s_meta = self._index.surface_phrases()
 
             if self._executor:
                 loop = asyncio.get_running_loop()
@@ -608,12 +616,8 @@ class GeoMatcher:
             for i, surface in enumerate(tier2_queries):
                 if surface in batch_results:
                     match, score, idx = batch_results[surface]
-                    if (surface[0] == match[0]
-                            and surface[:3] == match[:3]
-                            and abs(len(match) - len(surface)) <= _typo_len_guard(surface)):
-                        entry = s_meta[idx]
-                        if self._is_short_settlement(entry):
-                            continue
+                    entry = self._accept_typo_match(surface, match, idx, s_meta)
+                    if entry is not None:
                         meta = tier2_meta[i]
                         result = {
                             'geo_id': entry.street_id,
