@@ -1,10 +1,9 @@
 """Tests for core/db/db_events.py — EventOperations."""
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from freezegun import freeze_time
+from unittest.mock import AsyncMock, MagicMock
 
 try:
     from core.db.db_events import EventOperations
@@ -110,15 +109,6 @@ class TestEventOperations:
         ctx.conn.fetchval = AsyncMock(return_value=None)
         result = await ops.get_filtered_events_as_geojson(time_interval_minutes=60)
         assert result == {"type": "FeatureCollection", "features": []}
-
-    @pytest.mark.asyncio
-    async def test_delete_old_events_returns_count(self, ops):
-        ctx = ops.db.pool.acquire.return_value
-        ctx.conn.fetchval = AsyncMock(return_value=5)
-        await ops.delete_old_events(time_interval_minutes=1440)
-        args = ctx.conn.fetchval.call_args[0]
-        assert "DELETE FROM events" in args[0]
-        assert args[1] == 1440
 
     @pytest.mark.asyncio
     async def test_get_latest_update_time_returns_max(self, ops):

@@ -4,10 +4,8 @@ Geo-related database operations.
 только чтение (count, geojson, время обновления).
 """
 
-import json
 import logging
 import asyncio
-from typing import List, Dict, Any, Optional
 
 from common.settings import settings
 from common.db.base import Database
@@ -29,17 +27,6 @@ class GeoOperations:
         except Exception as e:
             logger.error(f"Failed to get geo count: {e}")
             return 0
-
-    async def get_latest_update_time(self) -> Optional[Any]:
-        """Get the timestamp of the last update for the geo table.
-
-        Таблицы table_updates в схеме нет (init-scripts) — берём MAX(created_at).
-        """
-        try:
-            return await self.db.fetchval("SELECT MAX(created_at) FROM geo", timeout=settings.db.command_timeout)
-        except Exception as e:
-            logger.error(f"Failed to get latest geo update time: {e}")
-            return None
 
     async def get_all_geo_as_geojson(self) -> str:
         """Fetch all geo records as a GeoJSON FeatureCollection."""

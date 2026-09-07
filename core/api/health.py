@@ -43,11 +43,6 @@ async def _check_db(db_request, *, use_cache: bool) -> tuple[bool, str]:
         return False, msg
 
 
-async def _check_db_cached(db_request) -> tuple[bool, str]:
-    """Backwards-compat shim: использует кэш. Для /health (liveness)."""
-    return await _check_db(db_request, use_cache=True)
-
-
 async def health_live_handler(request: web.Request):
     """
     Liveness probe - checks if app is running

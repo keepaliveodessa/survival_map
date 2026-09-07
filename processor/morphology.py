@@ -16,7 +16,7 @@ n-грамм, layer_classifier для лемматизации ключевых 
 import re
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Protocol
+from typing import Iterable, List, Protocol
 
 import mawo_pymorphy3 as pymorphy3
 import snowballstemmer
@@ -98,9 +98,6 @@ class Morphology:
     # топонимов и common-words. Увеличено до 20K для high-throughput сценариев.
     # ~20K записей × ~100 bytes = ~2MB RAM.
     _LEMMA_CACHE_MAX = 20000
-    # Фраз обычно меньше (~1000 алиасов × несколько вариантов), но lemma_for_phrase
-    # вызывается в _build_alias_index при каждом reindex_all → выигрыш ощутим.
-    _PHRASE_CACHE_MAX = 2000
     # Кэш стемминга — отдельный от лемм (Snowball дешевле pymorphy, но кэш
     # снимает повторную работу на потоке однотипных топонимов).
     # Увеличено до 20K для улучшения hit-rate при высокой нагрузке.
@@ -128,7 +125,6 @@ class Morphology:
         # O(1) обновление позиции через move_to_end. Кэшируем по нижнему
         # регистру — pymorphy3 не различает Малой/малой/МАЛОЙ.
         self._lemma_cache: "OrderedDict[str, Lemma]" = OrderedDict()
-        self._phrase_cache: "OrderedDict[str, str]" = OrderedDict()
         self._stem_cache: "OrderedDict[str, str]" = OrderedDict()
 
     @property
@@ -231,7 +227,6 @@ class Morphology:
         """Урезание LRU-кэшей до max_size записей (R-PR4 memory fallback)."""
         caps = (
             (self._lemma_cache, max_size),
-            (self._phrase_cache, min(max_size, self._PHRASE_CACHE_MAX)),
             (self._stem_cache, max_size),
         )
         for cache, cap in caps:
@@ -240,38 +235,11 @@ class Morphology:
 
     def cache_size(self) -> int:
         """Суммарный размер всех LRU-кэшей (для heartbeat)."""
-        return len(self._lemma_cache) + len(self._phrase_cache) + len(self._stem_cache)
+        return len(self._lemma_cache) + len(self._stem_cache)
 
     def lemmatize_words(self, words: Iterable[str]) -> List[Lemma]:
         """Лемматизирует последовательность строк."""
         return [self.lemmatize_word(w) for w in words if w]
-
-    def lemma_for_phrase(self, text: str) -> str:
-        """Single-shot лемматизация фразы (split → лемма каждого → join).
-
-        Используется geo_matcher для канонизации alias-имени в индексе,
-        когда отдельная токенизация избыточна (alias уже чистый, без пунктуации).
-
-        Phrase-level LRU cache (2000): reindex_all обрабатывает ~1000 алиасов;
-        при reload без cache каждый раз заново лемматизируется. С кешем —
-        instant hit на повторных вызовах.
-        """
-        if not text:
-            return ''
-
-        cached = self._phrase_cache.get(text)
-        if cached is not None:
-            self._phrase_cache.move_to_end(text)
-            return cached
-
-        result = ' '.join(
-            self.lemmatize_word(w).normal_form
-            for w in text.split() if w
-        )
-        self._phrase_cache[text] = result
-        while len(self._phrase_cache) > self._PHRASE_CACHE_MAX:
-            self._phrase_cache.popitem(last=False)
-        return result
 
     # ------------------------------------------------------------------ stemming
 

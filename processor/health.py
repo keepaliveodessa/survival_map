@@ -58,22 +58,6 @@ class HealthServer:
 
         return web.Response(text="OK")
 
-    def record_message_processed(self, duration_seconds: float = 0.0):
-        """Record a successfully processed message.
-
-        TODO: integrate with prometheus_client Counter/Histogram
-        once metrics stack is unified (R-PR4).
-        """
-        pass
-
-    def record_error(self):
-        """Record a processing error.
-
-        TODO: integrate with prometheus_client Counter
-        once metrics stack is unified (R-PR4).
-        """
-        pass
-
     async def start(self, port: int = 8765):
         """Запуск HTTP-сервера healthcheck."""
         app = web.Application()

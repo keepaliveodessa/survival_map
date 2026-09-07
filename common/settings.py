@@ -149,25 +149,16 @@ class JWTConfig:
 class SimilarityConfig:
     """Параметры sliding-window линкера гео-объектов и LayerClassifier.
 
-    Используются GeoMatcher (parser/geo_matcher.py) и LayerClassifier.
+    Используются GeoMatcher (processor/geo_matcher.py) и LayerClassifier.
+    Только поля, реально читаемые матчером; рудименты старого Python-резолвера
+    (midpoint/lemma-fuzzy/tier-пороги) удалены — геометрию решает PostGIS
+    (process_candidates_v2), распознавание — стем-индекс (Tier 1).
     """
-    # Порог fuzzy-матча (0-1) для tier-3 lemma fuzzy в _link_span.
-    # 0.82: отсекает ложные позитивы (0.75–0.79) при сохранении typo-матчей (≥0.83).
-    entity_similarity_threshold: float = 0.82
-
-    # Радиус для midpoint (метры) — макс. дистанция между геометриями.
-    pseudo_intersection_radius_meters: float = 150.0
-
     # Финальный top-K результатов find_geo().
     max_entities: int = 5
 
     # Длиннее этого порога (символов) сообщение не считается релевантной локацией.
     max_text_length: int = 380
-
-    # Порог fuzz.token_sort_ratio для surface fuzzy (Tier 1, 0-1).
-    phonetic_match_threshold: float = 0.85
-    # Включение lemma fuzzy fallback (tier-3 в _link_span).
-    lemma_fallback_enabled: bool = True
 
     # Порог fuzz.ratio для surface-орфо-корректора (Tier 2 в _link_span, 0-1).
     # 0.80: пропускает слабые совпадения (0.80–0.85) — не проходят как confident.
@@ -181,16 +172,6 @@ class SimilarityConfig:
     # Бонус к score для кандидатов, которым предшествует локационный предлог
     # ("на", "по", "в" и т.п.). Помогает при дедупе когда оба матча за одну улицу.
     prepositional_boost: float = 0.05
-
-    # Мин. score вторичного матча для участия в ГЕОМЕТРИИ мультиматч-пересечений
-    # (process_candidates). Ниже порога матч остаётся в matches (для прозрачности),
-    # но не искажает intersection/polygon. single_match-fallback берёт лучший по score.
-    geometry_min_score: float = 0.85
-
-    # Макс. дистанция (метры) для midpoint между geo-объектами.
-    midpoint_max_distance_m: float = 150.0
-    # Типы объектов, для которых разрешён midpoint.
-    midpoint_types: tuple = ('street', 'market', 'station', 'park', 'landmark')
 
     # Включить POS-фильтрацию (pymorphy3) для sliding-window кандидатов.
     # Безопасно ВКЛ (TASK 1): фильтр отбрасывает окно только если ВСЕ его токены

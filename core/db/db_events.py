@@ -186,26 +186,6 @@ class EventOperations:
     # Non-GeoJSON queries
     # ------------------------------------------------------------------
 
-    async def delete_old_events(self, time_interval_minutes: int) -> None:
-        """Delete events older than specified time interval."""
-        query = """
-            WITH deleted AS (
-                DELETE FROM events
-                WHERE event_time < NOW() - $1 * interval '1 minute'
-                RETURNING id
-            )
-            SELECT count(*) FROM deleted;
-        """
-        try:
-            deleted_count = await asyncio.wait_for(
-                self.db.fetchval(query, time_interval_minutes),
-                timeout=settings.db.command_timeout,
-            )
-            if deleted_count and deleted_count > 0:
-                logger.info(f"Successfully deleted {deleted_count} old events.")
-        except Exception as e:
-            logger.error(f"Failed to delete old events: {e}", exc_info=True)
-
     async def get_latest_update_time(self) -> Optional[datetime]:
         """Get the timestamp of the newest event."""
         try:

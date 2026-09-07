@@ -6,7 +6,7 @@ Redis removed - using pure in-memory cache only.
 import time
 import logging
 import asyncio
-from typing import Optional, Any, Dict
+from typing import Optional, Any
 from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
@@ -96,13 +96,6 @@ class CacheManager:
         self._cache.clear()
         logger.info("In-memory cache cleared")
     
-    def _make_key(self, prefix: str, *args, **kwargs) -> str:
-        """Генерирует ключ кэша из префикса и аргументов."""
-        parts = [prefix]
-        parts.extend(str(arg) for arg in args)
-        parts.extend(f"{k}={v}" for k, v in sorted(kwargs.items()))
-        return ":".join(parts)
-
     def _evict_lru(self, count: int = None):
         """
         Evict least recently used entries.

@@ -1,7 +1,5 @@
 """Tests for core/utils/cache.py — CacheEntry + CacheManager."""
 import asyncio
-import time
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from freezegun import freeze_time
@@ -44,17 +42,6 @@ class TestCacheEntry:
 # ============================================================
 
 class TestCacheManagerHelpers:
-    def test_make_key_with_args(self):
-        cm = CacheManager()
-        key = cm._make_key("events", "geojson", 60)
-        assert key == "events:geojson:60"
-
-    def test_make_key_with_kwargs_sorted(self):
-        cm = CacheManager()
-        key = cm._make_key("events", "geojson", layer="bus", time_filter=60)
-        # kwargs are sorted alphabetically
-        assert key == "events:geojson:layer=bus:time_filter=60"
-
     def test_evict_lru_default_count(self):
         cm = CacheManager(max_size=10)
         for i in range(10):

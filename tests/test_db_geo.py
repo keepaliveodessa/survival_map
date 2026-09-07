@@ -65,18 +65,6 @@ class TestGeoOperations:
         assert result == 0
 
     @pytest.mark.asyncio
-    async def test_get_latest_update_time_returns_timestamp(self, ops):
-        ops.db.fetchval = AsyncMock(return_value="2024-01-01T12:00:00+00:00")
-        result = await ops.get_latest_update_time()
-        assert result == "2024-01-01T12:00:00+00:00"
-
-    @pytest.mark.asyncio
-    async def test_get_latest_update_time_returns_none_on_error(self, ops):
-        ops.db.fetchval = AsyncMock(side_effect=Exception("DB error"))
-        result = await ops.get_latest_update_time()
-        assert result is None
-
-    @pytest.mark.asyncio
     async def test_get_all_geo_as_geojson_returns_feature_collection(self, ops):
         geojson = '{"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": null, "properties": {"name": "Test", "id": 1}}]}'
         ctx = ops.db.pool.acquire.return_value
