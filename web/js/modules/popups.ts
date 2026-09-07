@@ -67,30 +67,13 @@ async function copyToClipboard(text: string): Promise<boolean> {
             document.body.removeChild(textarea);
 
             if (success) {
-                // Bot API 6.2+: Показываем нативный попап
+                // Rule 5: showPopup() fires 'success' haptic itself (wrapper-level
+                // guarantee) — no separate hapticFeedback() call needed here.
                 if (window.telegramIntegration) {
-                    window.telegramIntegration.showPopup('Адрес скопирован в буфер обмена', [{ type: 'ok' }]);
-                } else if (window.Telegram?.WebApp?.showPopup && window.Telegram?.WebApp?.isVersionAtLeast?.('6.2')) {
-                    try {
-                        window.Telegram.WebApp.showPopup({
-                            message: 'Адрес скопирован в буфер обмена',
-                            buttons: [{ type: 'ok' }]
-                        });
-                    } catch (e) {
-                        alert('✅ Адрес скопирован в буфер обмена');
-                    }
-                } else if (window.Telegram?.WebApp?.showAlert && window.Telegram?.WebApp?.isVersionAtLeast?.('6.2')) {
-                    try {
-                        window.Telegram.WebApp.showAlert('✅ Адрес скопирован в буфер обмена');
-                    } catch (_e) {
-                        alert('✅ Адрес скопирован в буфер обмена');
-                    }
+                    window.telegramIntegration.showPopup('Адрес скопирован в буфер обмена', [{ type: 'ok' }], 'success');
                 } else {
+                    window.hapticFeedback?.('success');
                     alert('✅ Адрес скопирован в буфер обмена');
-                }
-
-                if (window.telegramIntegration) {
-                    window.telegramIntegration.hapticFeedback('success');
                 }
                 return true;
             } else {
@@ -101,6 +84,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
         // Fallback для обычного браузера (не Telegram)
         if (navigator.clipboard && navigator.clipboard.writeText) {
             await navigator.clipboard.writeText(text);
+            window.hapticFeedback?.('success');
             alert('✅ Адрес скопирован в буфер обмена');
             return true;
         }
@@ -116,6 +100,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
         document.body.removeChild(textarea);
 
         if (success) {
+            window.hapticFeedback?.('success');
             alert('✅ Адрес скопирован в буфер обмена');
             return true;
         }
@@ -125,19 +110,12 @@ async function copyToClipboard(text: string): Promise<boolean> {
     } catch (error) {
         console.error('Copy failed:', error);
 
+        // Rule 5: showAlert() fires 'error' haptic itself (wrapper-level
+        // guarantee) — no separate hapticFeedback() call needed here.
         if (window.telegramIntegration) {
-            window.telegramIntegration.hapticFeedback('error');
-        }
-
-        if (window.telegramIntegration) {
-            window.telegramIntegration.showAlert('❌ Не удалось скопировать адрес. Попробуйте еще раз.');
-        } else if (window.Telegram?.WebApp?.showAlert && window.Telegram?.WebApp?.isVersionAtLeast?.('6.2')) {
-            try {
-                window.Telegram.WebApp.showAlert('❌ Не удалось скопировать адрес. Попробуйте еще раз.');
-            } catch (_e) {
-                alert('❌ Не удалось скопировать адрес');
-            }
+            window.telegramIntegration.showAlert('❌ Не удалось скопировать адрес. Попробуйте еще раз.', 'error');
         } else {
+            window.hapticFeedback?.('error');
             alert('❌ Не удалось скопировать адрес');
         }
         return false;

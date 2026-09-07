@@ -136,9 +136,9 @@ declare global {
         telegramIntegration: {
             init(): boolean;
             hapticFeedback(type?: string): boolean;
-            showPopup(message: string, buttons?: Array<{ type: string }>): Promise<string>;
-            showAlert(message: string): Promise<void>;
-            showConfirm(message: string): Promise<boolean>;
+            showPopup(message: string, buttons?: Array<{ type: string }>, haptic?: string): Promise<string>;
+            showAlert(message: string, haptic?: string): Promise<void>;
+            showConfirm(message: string, haptic?: string): Promise<boolean>;
         };
 
         // ==================== TOKEN MANAGER (js/core/token-manager.ts) ====================

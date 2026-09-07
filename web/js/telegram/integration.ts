@@ -206,7 +206,25 @@ class TelegramIntegration {
         }
     }
 
-    showPopup(message: string, buttons: Array<{ type: string }> = [{ type: 'ok' }]): Promise<string> {
+    /**
+     * Fire haptic feedback with the full fallback chain (Rule 5):
+     * window.hapticFeedback (common.js) tries native HapticFeedback →
+     * this wrapper → HTML5 Vibration API. Falls back to the native-only
+     * wrapper if common.js is not loaded yet.
+     */
+    private fireHaptic(type: string): void {
+        if (typeof window.hapticFeedback === 'function') {
+            try {
+                window.hapticFeedback(type);
+                return;
+            } catch (_e) { /* fall through to native-only */ }
+        }
+        this.hapticFeedback(type);
+    }
+
+    showPopup(message: string, buttons: Array<{ type: string }> = [{ type: 'ok' }], haptic: string = 'light'): Promise<string> {
+        // Rule 5: every popup notification is accompanied by haptic feedback.
+        this.fireHaptic(haptic);
         const minOk = !!(this.tg?.isVersionAtLeast?.('6.2'));
         if (!this.tg?.showPopup || !minOk) {
             alert(message);
@@ -225,7 +243,9 @@ class TelegramIntegration {
         });
     }
 
-    showAlert(message: string): Promise<void> {
+    showAlert(message: string, haptic: string = 'light'): Promise<void> {
+        // Rule 5: every alert notification is accompanied by haptic feedback.
+        this.fireHaptic(haptic);
         const minOk = !!(this.tg?.isVersionAtLeast?.('6.2'));
         if (!this.tg?.showAlert || !minOk) {
             alert(message);
@@ -242,7 +262,9 @@ class TelegramIntegration {
         });
     }
 
-    showConfirm(message: string): Promise<boolean> {
+    showConfirm(message: string, haptic: string = 'light'): Promise<boolean> {
+        // Rule 5: confirm dialogs are notifications too.
+        this.fireHaptic(haptic);
         if (!this.tg?.showConfirm) {
             return Promise.resolve(confirm(message));
         }
