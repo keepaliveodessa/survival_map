@@ -5,7 +5,7 @@
 # =============================================================================
 # Stage 1: Builder (pip install с libpq-dev для asyncpg)
 # =============================================================================
-FROM python:3.11.10-slim-bookworm AS builder
+FROM python:3.11.14-slim-bookworm AS builder
 
 WORKDIR /build
 
@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # =============================================================================
 # Stage 2: Runtime (минимальный образ без libpq-dev)
 # =============================================================================
-FROM python:3.11.10-slim-bookworm
+FROM python:3.11.14-slim-bookworm
 
 LABEL maintainer="survival-map" \
       description="Survival Map API server (aiohttp + asyncpg + JWT)" \

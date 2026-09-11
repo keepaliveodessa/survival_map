@@ -4,7 +4,7 @@
 # =============================================================================
 # Stage 1: Builder (установка зависимостей + smoke-test)
 # =============================================================================
-FROM python:3.11.10-slim-bookworm AS builder
+FROM python:3.11.14-slim-bookworm AS builder
 
 WORKDIR /build
 
@@ -27,7 +27,7 @@ RUN python -c "from rapidfuzz import fuzz; from mawo_pymorphy3 import MorphAnaly
 # =============================================================================
 # Stage 2: Runtime (минимальный образ)
 # =============================================================================
-FROM python:3.11.10-slim-bookworm
+FROM python:3.11.14-slim-bookworm
 
 LABEL maintainer="survival-map" \
       description="NLP pipeline (pymorphy3 + rapidfuzz + PostGIS)" \

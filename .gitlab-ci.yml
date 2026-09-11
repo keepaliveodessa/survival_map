@@ -149,7 +149,7 @@ hadolint:
 
 frontend-security:
   stage: security-scan
-  image: node:20-alpine
+  image: node:22-alpine
   cache:
     <<: *npm-cache
   before_script:
@@ -163,7 +163,7 @@ frontend-security:
 
 frontend-tests:
   stage: test
-  image: node:20-alpine
+  image: node:22-alpine
   cache:
     <<: *npm-cache
   before_script:
@@ -205,7 +205,8 @@ integration-tests:
   stage: test
   image: $PYTHON_IMAGE
   services:
-    - name: postgis/postgis:15-3.3
+    # postgis/postgis:*-3.x — bullseye-based (EOL), replaced with bookworm build
+    - name: imresamu/postgis:15-3.5-bookworm
       alias: postgres
   variables:
     POSTGRES_HOST: "postgres"
@@ -311,7 +312,7 @@ common-invariant:
 
 frontend-build:
   stage: test
-  image: node:20-alpine
+  image: node:22-alpine
   cache:
     <<: *npm-cache
   before_script:

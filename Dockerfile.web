@@ -6,7 +6,7 @@
 # =============================================================================
 # Stage 1: Frontend builder (node — discarded after build)
 # =============================================================================
-FROM node:20.18-alpine3.21 AS frontend-builder
+FROM node:22.21-alpine3.21 AS frontend-builder
 
 WORKDIR /web
 
@@ -38,7 +38,7 @@ RUN npm run build && \
 # =============================================================================
 # Stage 2: nginx runtime (no node, no npm, no node_modules)
 # =============================================================================
-FROM nginx:1.27-alpine
+FROM nginx:1.29-alpine
 
 LABEL maintainer="survival-map" \
       description="Survival Map frontend + nginx reverse proxy" \

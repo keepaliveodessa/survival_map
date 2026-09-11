@@ -4,7 +4,7 @@
 # =============================================================================
 # Stage 1: Builder
 # =============================================================================
-FROM python:3.11.10-slim-bookworm AS builder
+FROM python:3.11.14-slim-bookworm AS builder
 
 WORKDIR /build
 
@@ -22,7 +22,7 @@ RUN python -c "from pyrogram import Client; print('✅ kurigram OK')"
 # =============================================================================
 # Stage 2: Runtime (минимальный образ)
 # =============================================================================
-FROM python:3.11.10-slim-bookworm
+FROM python:3.11.14-slim-bookworm
 
 LABEL maintainer="survival-map" \
       description="Telegram client (kurigram) + text preprocessing + photo download" \

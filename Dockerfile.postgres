@@ -1,15 +1,26 @@
-FROM postgis/postgis:15-3.3
+# Dockerfile.postgres — PostgreSQL 15 (bookworm) + PostGIS 3.5 + pg_cron
+#
+# Почему не postgis/postgis:15-3.x: официальные теги собраны на Debian
+# bullseye (pgdg110), который достиг end-of-LTS (авг 2026) — репозиторий
+# bullseye-security просрочен, apt-get update падает с exit 100.
+# База postgres:15-bookworm активно поддерживается и УЖЕ содержит настроенный
+# PGDG-репозиторий (bookworm-pgdg main 15 + ключ) — PostGIS и pg_cron
+# ставим из него же (те же пакеты, что ставил образ postgis/postgis).
+
+FROM postgres:15-bookworm
 
 LABEL maintainer="survival-map" \
-      description="PostgreSQL 15 + PostGIS 3.3 with cron" \
+      description="PostgreSQL 15 + PostGIS 3.5 with cron" \
       org.opencontainers.image.source="https://github.com/survival-map"
 
 RUN --mount=type=cache,target=/var/cache/apt,id=postgres-runtime \
     apt-get update && apt-get install -y --no-install-recommends \
+        postgresql-15-postgis-3 \
+        postgresql-15-postgis-3-scripts \
         postgresql-15-cron \
         postgresql-contrib-15 \
-        && apt-get clean \
-        && rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY postgres/config/postgresql.conf /etc/postgresql/postgresql.conf
 COPY postgres/config/pg_hba.conf     /etc/postgresql/pg_hba.conf

@@ -260,7 +260,8 @@ services:
     networks:
       - frontend
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost/health/ready || exit 1"]
+      # busybox wget (есть в nginx:alpine); curl в образе отсутствует
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health/ready >/dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 3

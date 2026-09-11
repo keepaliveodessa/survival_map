@@ -68,7 +68,7 @@ run_job "hadolint" "hadolint/hadolint:v2.12.0-alpine" \
      hadolint --failure-threshold warning Dockerfile.web && \
      hadolint --failure-threshold warning Dockerfile.postgres"
 
-run_job "frontend-security" "node:20-alpine" \
+run_job "frontend-security" "node:22-alpine" \
     "cd web && npm ci --no-audit --no-fund && \
      npx eslint js --ext .ts,.js --no-error-on-unmatched-pattern --quiet && \
      npx eslint js --ext .ts,.js --rule '{\"security/detect-unsafe-regex\": \"error\", \"security/detect-non-buffer-require\": \"error\", \"security/detect-new-buffer\": \"error\", \"security/detect-buffer-noassert\": \"error\"}' --no-error-on-unmatched-pattern --quiet"
@@ -105,7 +105,7 @@ for combo in "${MATRIX_COMBOS[@]}"; do
          python scripts/ci_check_webview_validation.py '${TEST_ENV_VALUE}' '${EXPECTED_BOOL}' '${EXPECTED_LOG_WARNING}'"
 done
 
-run_job "frontend-build" "node:20-alpine" \
+run_job "frontend-build" "node:22-alpine" \
     "cd web && npm ci --no-audit --no-fund && \
      npm run typecheck && \
      npm run build && \

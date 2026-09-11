@@ -3,7 +3,7 @@
 **Сервис:** `postgres/` (PostgreSQL 15 + PostGIS 3.3 + pg_cron)
 **Порт:** 5432 (internal network only)
 **Конфигурация:** `postgres/config/postgresql.conf`
-**Docker:** Base image `postgis/postgis:15-3.4`, non-root, LABEL
+**Docker:** Base image `postgres:15-bookworm` + PGDG `postgresql-15-postgis-3` / `postgresql-15-cron` (postgis/postgis:15-3.x мёртв — bullseye EOL), non-root, LABEL
 
 ---
 
