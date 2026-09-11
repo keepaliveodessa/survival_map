@@ -23,6 +23,25 @@ except ImportError:
     _HAS_AIOHTTP = False
 
 
+# --- HTTP metrics hook (dependency inversion) --------------------------------
+# Архитектурный инвариант common-invariant: common/ не импортирует core/*.
+# Раньше middleware делал `from core.metrics import ...` внутри запроса —
+# это ломало инвариант и тащило core-модули в parser/processor, которые
+# этот модуль импортируют. Теперь core сам регистрирует свои prometheus-
+# метрики при старте через register_http_metrics(), а middleware берёт их
+# из реестра. Не зарегистрировано — метрики просто пропускаются.
+_http_metrics = None
+
+
+def register_http_metrics(*, requests_total, request_duration_seconds) -> None:
+    """Регистрация HTTP-метрик хост-приложения (вызывается из core)."""
+    global _http_metrics
+    _http_metrics = {
+        'requests_total': requests_total,
+        'request_duration_seconds': request_duration_seconds,
+    }
+
+
 _request_id_var: ContextVar[str] = ContextVar('request_id', default='-')
 
 
@@ -236,20 +255,20 @@ else:
                 }
             )
 
-            # Prometheus metrics
-            try:
-                from core.metrics import http_requests_total, http_request_duration_seconds
-                http_requests_total.labels(
-                    method=request.method,
-                    path=request.path,
-                    status=status
-                ).inc()
-                http_request_duration_seconds.labels(
-                    method=request.method,
-                    path=request.path
-                ).observe(duration)
-            except Exception:
-                pass
+            # Prometheus metrics (инжекция из core — см. register_http_metrics)
+            if _http_metrics is not None:
+                try:
+                    _http_metrics['requests_total'].labels(
+                        method=request.method,
+                        path=request.path,
+                        status=status
+                    ).inc()
+                    _http_metrics['request_duration_seconds'].labels(
+                        method=request.method,
+                        path=request.path
+                    ).observe(duration)
+                except Exception:
+                    pass
 
             # Restore ContextVar to parent context value
             _request_id_var.reset(token)

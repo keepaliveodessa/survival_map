@@ -15,7 +15,8 @@ from core.db.dbconnect import Database, Request
 from core.utils.cache import CacheManager
 from core.handlers import basic_router
 from core.middlewares.ratelimit import RateLimiter
-from common.logging_config import setup_logging, logging_middleware
+from common.logging_config import setup_logging, logging_middleware, register_http_metrics
+from core.metrics import http_requests_total, http_request_duration_seconds
 from core.api.routes import setup_routes
 from core.api.auth import init_cache
 from core.api.websocket import WebSocketManager
@@ -24,6 +25,13 @@ from core.middlewares.body_size_limit import body_size_limit_middleware
 from common.pg_listener import PgNotifyListener
 
 logger = logging.getLogger(__name__)
+
+# common/ не может импортировать core (common-invariant) — регистрируем
+# HTTP-метрики через инжекцию, middleware common/logging_config.py подхватит.
+register_http_metrics(
+    requests_total=http_requests_total,
+    request_duration_seconds=http_request_duration_seconds,
+)
 
 
 async def _run_bot_polling(app: web.Application):

@@ -176,8 +176,12 @@ class TestDocsChecks:
         assert "refresh-geo-mv" not in text
 
 
-class TestPgCronConfigScriptCheck:
-    def test_pg_cron_config_script_exists_and_is_idempotent(self):
-        text = _file_text("postgres/init-scripts/00-pg-cron-config.sql")
-        assert "cron.database_name" in text
-        assert "postgres" in text
+class TestPgCronConfigCheck:
+    def test_pg_cron_config_present_and_correct(self):
+        # pg_cron конфигурируется в postgresql.conf (пре-лоад библиотеки и БД
+        # для cron-таблиц), а НЕ в init-script: shared_preload_libraries нельзя
+        # задать через CREATE EXTENSION/ALTER SYSTEM до старта сервера.
+        # Dockerfile.postgres монтирует этот конфиг через config_file=.
+        text = _file_text("postgres/config/postgresql.conf")
+        assert "shared_preload_libraries = 'pg_cron'" in text
+        assert "cron.database_name = 'postgres'" in text
