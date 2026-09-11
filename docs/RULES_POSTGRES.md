@@ -272,6 +272,8 @@ SELECT geom FROM geo WHERE id = $1;  -- может быть invalid
 
 **Правило:** `random`, `intersection`, `weighted_centroid` ВСЕГДА возвращают POINT (валидация через триггер). `street_segment` возвращает LINESTRING или MULTILINESTRING. `single_match` может быть любым типом. `random_null` имеет geom=NULL и НЕ проходит триггер — processor конвертирует в `random` перед INSERT.
 
+**District-кандидаты (R-DB8.district):** кандидат с типом `district` НИКОГДА не становится финальным объектом и не участвует в построении геометрий (гипотезы single_match/intersection/street_segment/weighted_centroid). district используется ТОЛЬКО как фильтр: остальные кандидаты вне полигона района отбрасываются. Если district — единственный кандидат (или все кандидаты отфильтрованы районом), функция возвращает `random_null` → processor вставляет событие со стратегией `random` (R-PR22).
+
 **Описание стратегий v2:**
 - `single_match`: выбирается один кандидат с highest score. При score >= `p_score_threshold` (по умолчанию 0.70, настраивается через `GEO_CANDIDATE_MIN_SCORE`) → участвует в гипотезах. При anti-list guard (сильный выброс >3000м) → принудительный single_match.
 - `intersection`: среднее координат всех кандидатов. Только если spread <= 40м (или ≤200м + хотя бы одна линия). Не переопределяет валидный `street_segment`.
@@ -341,7 +343,8 @@ RETURNS TABLE (
 9. Weighted Centroid: scatter <= 1500м, только если нет линии/сегмента
 10. Anti-list Guard: сильный кандидат (score >= 0.85) на расстоянии >2000м от выбранной геометрии → fallback single_match
 11. Single Match: лучший кандидат по score, tiebreak тип (line > point), длина, geo_id
-12. Random Null: 0 валидных кандидатов → strategy='random_null', geom=NULL
+12. District filter: district исключается из кандидатов; district-полигон фильтрует кандидатов вне района; district-only → random_null с diagnostics reason='district_only' (см. R-DB8.district)
+13. Random Null: 0 валидных кандидатов → strategy='random_null', geom=NULL
 
 **Вызов из Python (CTE pipeline):**
 

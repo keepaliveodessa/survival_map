@@ -185,3 +185,29 @@ class TestPgCronConfigCheck:
         text = _file_text("postgres/config/postgresql.conf")
         assert "shared_preload_libraries = 'pg_cron'" in text
         assert "cron.database_name = 'postgres'" in text
+
+
+class TestDistrictCandidateRule:
+    """R-DB8.district: district — только фильтр, никогда финальный объект."""
+
+    def test_v2_excludes_district_from_candidates(self):
+        text = _file_text("postgres/init-scripts/16-process-candidates-v2.sql")
+        # district-кандидаты удаляются до построения гипотез
+        assert "s.type != 'district'" in text
+
+    def test_v2_district_used_as_polygon_filter(self):
+        text = _file_text("postgres/init-scripts/16-process-candidates-v2.sql")
+        # фильтрация остальных кандидатов по полигону района (ST_Within)
+        assert "ST_Within" in text
+        assert "type = 'district'" in text
+
+    def test_v2_district_only_returns_random_null(self):
+        text = _file_text("postgres/init-scripts/16-process-candidates-v2.sql")
+        # district единственный кандидат → random_null (processor вставит random)
+        assert "district_only" in text
+
+    def test_v1_keeps_same_district_contract(self):
+        text = _file_text("postgres/init-scripts/08-process-candidates.sql")
+        # v1 исторически реализует тот же контракт — инвариант не должен деградировать
+        assert "WHERE type != 'district'" in text
+        assert "WHERE type = 'district'" in text

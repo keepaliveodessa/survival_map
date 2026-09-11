@@ -26,6 +26,10 @@ DECLARE
     v_geo_count         INTEGER;
     v_anti_list_m       DOUBLE PRECISION := 3000.0;
     v_anti_list_score   DOUBLE PRECISION := 0.85;
+    v_kept_ids          INTEGER[];
+    v_kept_scores       DOUBLE PRECISION[];
+    v_kept_texts        TEXT[];
+    v_district_id       INTEGER;
 BEGIN
     v_scores := COALESCE(p_scores,
         ARRAY_FILL(1.0::double precision, ARRAY[COALESCE(array_length(p_geo_ids, 1), 0)]));
@@ -64,6 +68,63 @@ BEGIN
             0.0::DOUBLE PRECISION, jsonb_build_object('reason', 'no_valid_candidates');
         RETURN;
     END IF;
+
+    -- ── District = только фильтр, никогда финальный объект ─────────────────
+    -- Районные полигоны слишком велики: single_match по ним даёт точку
+    -- где-то внутри района вместо конкретного места; в гипотезах
+    -- (intersection/street_segment/weighted_centroid) полигон района
+    -- пересекается со всем подряд и ломает выбор главной линии.
+    -- Правило: district отфильтровывает кандидатов вне своего полигона,
+    -- сам исключается из кандидатов. Если district был ЕДИНСТВЕННЫМ
+    -- кандидатом — random_null (processor сам вставит random-точку).
+    WITH d AS (
+        SELECT s.id, ST_MakeValid(s.geom) AS d_geom
+        FROM geo s
+        JOIN unnest(v_filtered_ids) AS x(id) ON s.id = x.id
+        WHERE s.type = 'district'
+        ORDER BY s.id
+        LIMIT 1
+    ),
+    kept AS (
+        SELECT u.id, u.score, u.text
+        FROM unnest(v_filtered_ids, v_filtered_scores, v_filtered_texts)
+            AS u(id, score, text)
+        JOIN geo s ON s.id = u.id
+        WHERE s.type != 'district'
+          AND NOT EXISTS (
+              SELECT 1 FROM d
+              WHERE NOT ST_Within(ST_MakeValid(s.geom), d.d_geom)
+          )
+    ),
+    kept_ids AS (
+        SELECT array_agg(id ORDER BY score DESC) AS ids,
+               array_agg(score ORDER BY score DESC) AS scores,
+               array_agg(text ORDER BY score DESC) AS texts
+        FROM kept
+    ),
+    district_pick AS (
+        SELECT id AS district_id FROM d
+    )
+    SELECT ki.ids, ki.scores, ki.texts, dp.district_id
+    INTO v_kept_ids, v_kept_scores, v_kept_texts, v_district_id
+    FROM kept_ids ki LEFT JOIN district_pick dp ON TRUE;
+
+    -- District был единственным кандидатом (или все кандидаты вне района):
+    -- geometry нет — random_null, processor сгенерирует random-точку (R-PR22).
+    IF v_kept_ids IS NULL OR array_length(v_kept_ids, 1) = 0 THEN
+        RETURN QUERY SELECT 'random_null'::TEXT, NULL::GEOMETRY, '[]'::JSONB,
+            0.0::DOUBLE PRECISION,
+            CASE WHEN v_district_id IS NOT NULL
+                 THEN jsonb_build_object('reason', 'district_only',
+                         'district_id', v_district_id)
+                 ELSE jsonb_build_object('reason', 'all_filtered_by_district')
+            END;
+        RETURN;
+    END IF;
+
+    v_filtered_ids    := v_kept_ids;
+    v_filtered_scores := v_kept_scores;
+    v_filtered_texts  := v_kept_texts;
 
     RETURN QUERY
     WITH candidates AS (
