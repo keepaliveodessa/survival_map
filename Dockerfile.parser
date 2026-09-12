@@ -43,6 +43,7 @@ RUN useradd -m -u 1000 parser && \
 
 COPY --chown=parser:parser parser/ ./parser/
 COPY --chown=parser:parser common/ ./common/
+COPY --chown=parser:parser core/ ./core/
 
 USER parser
 
