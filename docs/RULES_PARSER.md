@@ -57,7 +57,7 @@ async def shutdown(self, drain_timeout: float = 20.0):
 
 ### R-P4: Heartbeat healthcheck
 
-Parser пишет timestamp в `/tmp/parser_heartbeat` каждую секунду. Docker healthcheck проверяет свежесть файла:
+Parser пишет timestamp в `/tmp/parser_heartbeat` каждые 5 секунд. Docker healthcheck проверяет свежесть файла:
 
 ```bash
 test -f /tmp/parser_heartbeat && [ $(( $(date +%s) - $(cat /tmp/parser_heartbeat) )) -lt 60 ]
@@ -207,7 +207,7 @@ parser:
   cap_drop:
     - ALL
   tmpfs:
-    - /tmp:size=10m
+    - /tmp:noexec,nosuid,size=100m
 ```
 
 **Правило:** Parser работает от non-root (UID 1000). `cap_drop: ALL`. tmpfs для temp-файлов.

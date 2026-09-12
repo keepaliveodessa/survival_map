@@ -22,10 +22,32 @@ from pyrogram import errors
 from pyrogram.types import Message
 
 from common.settings import settings
-from common.db.base import RETRYABLE_EXCEPTIONS as _TRANSIENT_ERRORS
 from common.logging_config import setup_logging
 from common.retry import retry_with_backoff
 from common.pg_listener import PgNotifyListener
+from common.metrics import (
+    parser_messages_processed_total,
+    parser_errors_total,
+    parser_queue_depth,
+    parser_workers_active,
+    parser_photos_downloaded_total,
+    parser_photos_failed_total,
+    parser_batch_size,
+)
+from common.text_preprocessor import strip_tail, preprocess_light, truncate_for_geo, sanitize_text
+
+from .config import (
+    _MIN_WORKERS,
+    _MAX_WORKERS,
+    _SCALE_UP_QSIZE,
+    _IDLE_TIMEOUT,
+    _QUEUE_MAXSIZE,
+    _BACKPRESSURE_HIGH,
+    _BACKPRESSURE_LOW,
+    _BATCH_FLUSH_INTERVAL,
+    _HEARTBEAT_INTERVAL,
+    _PHOTO_DOWNLOAD_CONCURRENCY,
+)
 
 setup_logging(
     level=getattr(logging, settings.app.log_level.upper(), logging.INFO),
@@ -33,16 +55,10 @@ setup_logging(
 )
 
 from common.db_adapter import DBAdapter
-from common.text_preprocessor import strip_tail, preprocess_light, truncate_for_geo, sanitize_text
 
 logger = logging.getLogger(__name__)
 
 KIEV_TZ = ZoneInfo('Europe/Kiev')
-
-_MIN_WORKERS = 2
-_MAX_WORKERS = 8
-_SCALE_UP_QSIZE = 20
-_IDLE_TIMEOUT = 15
 
 
 class ParserBot:
@@ -57,6 +73,8 @@ class ParserBot:
         self._errors = 0
         self._cleanup_listener_task: Optional[asyncio.Task] = None
         self._photo_listener_task: Optional[asyncio.Task] = None
+        self._stale_photo_task: Optional[asyncio.Task] = None
+        self._shutdown_event: asyncio.Event = asyncio.Event()
         self._shutdown_started = False
 
         if not settings or not settings.bot or not settings.bot.channel_id:
@@ -67,13 +85,17 @@ class ParserBot:
         self.channel_id = settings.bot.channel_id
         self.events_media_dir = settings.parser.events_media_dir
 
-        self._pending_queue: asyncio.Queue = asyncio.Queue(maxsize=65)
+        self._pending_queue: asyncio.Queue = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
         self._worker_tasks: list[asyncio.Task] = []
         self._worker_seq = 0
         self._adaptive_pool_task: Optional[asyncio.Task] = None
         self._idle_seconds = 0
         self._backpressure_active = False
-        self._download_semaphore = asyncio.Semaphore(3)
+        self._download_semaphore = asyncio.Semaphore(_PHOTO_DOWNLOAD_CONCURRENCY)
+        # Batch insert buffer: workers accumulate preprocessed messages here,
+        # flushed as a single executemany to reduce DB round-trips.
+        self._batch_buffer: list = []
+        self._batch_flush_task: Optional[asyncio.Task] = None
 
     async def initialize(self) -> bool:
         """Инициализировать БД и Telegram клиент."""
@@ -105,7 +127,7 @@ class ParserBot:
 
     async def _init_telegram_client(self) -> bool:
         """Запустить pyrogram клиент с сессией и прокси (если настроен)."""
-        session_path = os.path.join("/app/parser", "session.session")
+        session_path = str(Path(__file__).parent / "session.session")
         if not os.path.exists(session_path):
             logger.error(
                 f"❌ Session file not found: {session_path}. "
@@ -131,7 +153,7 @@ class ParserBot:
             async def _start_client():
                 self.app = Client(
                     name="session",
-                    workdir="/app/parser",
+                    workdir=str(Path(__file__).parent),
                     **({"proxy": proxy_config} if proxy_config else {})
                 )
                 logger.info("Starting Telegram client...")
@@ -226,7 +248,7 @@ class ParserBot:
                 return
             except asyncio.QueueFull:
                 logger.warning(
-                    f"Message {message.id}: queue full ({self._pending_queue.qsize()}/65) "
+                    f"Message {message.id}: queue full ({self._pending_queue.qsize()}/{_QUEUE_MAXSIZE}) "
                     "— direct DB write (backpressure)"
                 )
             except Exception as e:
@@ -252,6 +274,7 @@ class ParserBot:
             self._adaptive_pool_task = asyncio.create_task(
                 self._adaptive_pool_runner()
             )
+            self._batch_flush_task = asyncio.create_task(self._batch_flush_loop())
 
             await self._load_chat_history()
 
@@ -271,8 +294,8 @@ class ParserBot:
             self._stale_photo_task = asyncio.create_task(self._run_stale_photo_cleaner())
 
             while self._running:
-                self._write_heartbeat()
-                await asyncio.sleep(1)
+                await self._write_heartbeat()
+                await asyncio.sleep(_HEARTBEAT_INTERVAL)
 
         except Exception as e:
             logger.error(f"Telegram client error: {e}")
@@ -288,11 +311,14 @@ class ParserBot:
         return dt.astimezone(KIEV_TZ)
 
     @staticmethod
-    def _write_heartbeat():
+    async def _write_heartbeat():
         """Записать timestamp в /tmp/parser_heartbeat для healthcheck."""
         try:
-            with open('/tmp/parser_heartbeat', 'w') as f:  # nosec B108 — container /tmp, Docker healthcheck
-                f.write(str(int(datetime.now(timezone.utc).timestamp())))
+            await asyncio.to_thread(
+                lambda: open('/tmp/parser_heartbeat', 'w').write(
+                    str(int(datetime.now(timezone.utc).timestamp()))
+                )
+            )
         except OSError:
             pass
 
@@ -313,11 +339,16 @@ class ParserBot:
             exc = task.exception()
         except asyncio.CancelledError:
             return
+        # Remove the dead task from the worker list before respawning
+        if task in self._worker_tasks:
+            self._worker_tasks.remove(task)
         logger.critical(f"Queue worker died unexpectedly ({exc!r}) — respawning")
         self._spawn_worker()
 
     def _remove_worker(self) -> bool:
         """Отменить и удалить одного воркера (если превышен минимум)."""
+        # Filter out tasks that are already done before counting
+        self._worker_tasks = [t for t in self._worker_tasks if not t.done()]
         if len(self._worker_tasks) <= _MIN_WORKERS:
             return False
         task = self._worker_tasks.pop()
@@ -333,13 +364,15 @@ class ParserBot:
                 break
             qsize = self._pending_queue.qsize()
             n_workers = len(self._worker_tasks)
+            parser_queue_depth.set(qsize)
+            parser_workers_active.set(n_workers)
             
             # Backpressure: если очередь почти полная, замедляем прием
-            if qsize >= 60:  # 60/65 = 92% full
+            if qsize >= _BACKPRESSURE_HIGH:  # _BACKPRESSURE_HIGH/_QUEUE_MAXSIZE ≈ 92% full
                 if not self._backpressure_active:
                     logger.warning(f"Backpressure ACTIVE: queue at {qsize}/65")
                     self._backpressure_active = True
-            elif qsize < 40:
+            elif qsize < _BACKPRESSURE_LOW:
                 if self._backpressure_active:
                     logger.info(f"Backpressure RELEASED: queue at {qsize}/65")
                     self._backpressure_active = False
@@ -370,6 +403,7 @@ class ParserBot:
                 await self._process_message_with_retries(message)
             except Exception as e:
                 self._errors += 1
+                parser_errors_total.labels(component="worker").inc()
                 logger.error(
                     f"Worker {worker_id}: message {message.id} failed permanently: {e}"
                 )
@@ -392,9 +426,11 @@ class ParserBot:
 
     async def _process_message(self, message: Message):
         """Предобработка сообщения и запись в pending_events."""
-        if str(message.chat.id) != str(self.channel_id):
-            logger.debug(f"Skipping message from wrong channel: {message.chat.id}")
-            return
+        # The pyrogram on_message filter already scopes to self.channel_id,
+        # so this check is redundant. Kept as an assert for debug safety.
+        assert str(message.chat.id) == str(self.channel_id), (
+            f"Unexpected channel {message.chat.id} != {self.channel_id}"
+        )
 
         if not (message.text or message.caption or message.photo):
             logger.debug(f"Message {message.id}: no text/caption/photo, skipped")
@@ -404,31 +440,68 @@ class ParserBot:
         message_id = message.id
 
         raw_text = self._extract_text(message)
-        stripped = strip_tail(raw_text)
-        preserved = sanitize_text(preprocess_light(stripped)) or ''
+        sanitized = sanitize_text(raw_text)
+        stripped = strip_tail(sanitized)
+        preserved = preprocess_light(stripped) or ''
         preserved = truncate_for_geo(preserved, settings.parser.max_text_length)
 
         photo_file_id = None
         if message.photo:
             photo_file_id = message.photo.file_id
 
+        # Append to batch buffer; a dedicated flush loop drains it periodically.
+        # No lock needed: single-threaded event loop, no await between append
+        # and the flush loop's read.
+        self._batch_buffer.append(
+            (message_id, preserved, self._to_kiev(message.date), photo_file_id)
+        )
+        parser_batch_size.set(len(self._batch_buffer))
+
+        self._messages_processed += 1
+        parser_messages_processed_total.inc()
+        elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+        logger.debug(
+            f"Message {message_id} enqueued in {elapsed:.2f}s "
+            f"(photo={'yes' if photo_file_id else 'no'})"
+        )
+
+    async def _batch_flush_loop(self):
+        """Background loop: drain batch buffer every _BATCH_FLUSH_INTERVAL seconds."""
+        while self._running:
+            await asyncio.sleep(_BATCH_FLUSH_INTERVAL)
+            try:
+                await self._flush_batch()
+            except Exception as e:
+                logger.error(f"Batch flush loop error: {e}")
+        # Final flush on shutdown
         try:
-            await self.db.pool.execute(
+            await self._flush_batch()
+        except Exception as e:
+            logger.error(f"Final batch flush error: {e}")
+
+    async def _flush_batch(self):
+        """Flush buffered messages to pending_events via executemany.
+
+        Uses ON CONFLICT DO NOTHING so duplicate (message_id, event_time)
+        pairs are silently skipped (idempotent). Only swaps buffer on
+        successful insert — retains batch for retry on failure.
+        """
+        if not self._batch_buffer:
+            return
+        batch = self._batch_buffer
+
+        try:
+            await self.db.pool.executemany(
                 """INSERT INTO pending_events
                    (message_id, text, event_time, photo_file_id)
                    VALUES ($1, $2, $3, $4)
                    ON CONFLICT (message_id, event_time) DO NOTHING""",
-                message_id, preserved, self._to_kiev(message.date), photo_file_id,
+                batch,
             )
-            self._messages_processed += 1
-            elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
-            logger.debug(
-                f"Message {message_id} enqueued in {elapsed:.2f}s "
-                f"(photo={'yes' if photo_file_id else 'no'})"
-            )
+            self._batch_buffer = []
         except Exception as e:
-            self._errors += 1
-            logger.error(f"Message {message_id}: failed to enqueue: {e}")
+            self._errors += len(batch)
+            logger.error(f"Batch insert failed ({len(batch)} messages): {e}")
             raise
 
     async def _run_photo_download_listener(self):
@@ -444,7 +517,7 @@ class ParserBot:
             pool=self.db.pool,
             channels=['photo_download'],
             handler=_handle_notify,
-            shutdown_event=asyncio.Event() if not hasattr(self, '_shutdown_event') else self._shutdown_event,
+            shutdown_event=self._shutdown_event,
             label="photo_download",
         )
         await self._photo_listener.run()
@@ -474,13 +547,17 @@ class ParserBot:
         if not rows:
             return
         logger.info(f"Recovering {len(rows)} missing photo download(s)")
-        for row in rows:
+
+        async def _recover_one(row):
             try:
                 await self._download_photo_by_notify(dict(row))
             except Exception as e:
                 logger.warning(
                     f"Photo recovery failed for event {row['event_id']}: {e}"
                 )
+
+        # Parallelize recovery; _download_semaphore caps at 3 concurrent
+        await asyncio.gather(*(_recover_one(row) for row in rows))
 
     async def _download_photo_by_notify(self, data: dict):
         """Скачать фото по file_id из NOTIFY payload."""
@@ -498,10 +575,13 @@ class ParserBot:
                     "UPDATE events SET photo_url = $1 WHERE id = $2 AND photo_url IS NULL",
                     photo_url, event_id,
                 )
+                parser_photos_downloaded_total.inc()
                 logger.info(f"Event {event_id}: photo attached: {photo_url}")
             else:
+                parser_photos_failed_total.inc()
                 logger.debug(f"Event {event_id}: photo download returned None")
         except Exception as e:
+            parser_photos_failed_total.inc()
             logger.warning(f"Event {event_id}: photo download failed: {e}")
 
     async def _download_photo_by_file_id(self, file_id: str, message_id: int) -> Optional[str]:
@@ -509,8 +589,6 @@ class ParserBot:
         try:
             if not self.events_media_dir:
                 return None
-
-            from pathlib import Path
 
             target_dir = Path(self.events_media_dir).resolve()
             target_dir.mkdir(parents=True, exist_ok=True)
@@ -573,7 +651,7 @@ class ParserBot:
             pool=self.db.pool,
             channels=['events_cleaned'],
             handler=_handle_notify,
-            shutdown_event=asyncio.Event() if not hasattr(self, '_shutdown_event') else self._shutdown_event,
+            shutdown_event=self._shutdown_event,
             label="events_cleaned",
         )
         await self._cleanup_listener.run()
@@ -585,13 +663,19 @@ class ParserBot:
 
     async def _run_stale_photo_cleaner(self):
         """Периодическая очистка фото старше 70 минут (страховка от потери pg_notify)."""
+        from .config import _STALE_PHOTO_INTERVAL
         while self._running:
             await self._cleanup_stale_photos()
-            await asyncio.sleep(300)
+            await asyncio.sleep(_STALE_PHOTO_INTERVAL)
 
     async def _cleanup_stale_photos(self):
         """Удалять файлы старше 70 минут независимо от БД (страховка от потери pg_notify)."""
-        cutoff = time.time() - 70 * 60
+        # Offload blocking file I/O to a thread to avoid stalling the event loop
+        await asyncio.to_thread(self._cleanup_stale_photos_sync)
+
+    def _cleanup_stale_photos_sync(self):
+        from .config import _STALE_PHOTO_CUTOFF_SECONDS
+        cutoff = time.time() - _STALE_PHOTO_CUTOFF_SECONDS
         media_dir = Path(self.events_media_dir)
         if not media_dir.exists():
             return
@@ -609,7 +693,7 @@ class ParserBot:
         if deleted:
             logger.info(f"Stale photos cleaned: {deleted}")
 
-    async def shutdown(self, drain_timeout: float = 20.0):
+async def shutdown(self, drain_timeout: float = 20.0):
         """Корректно остановить бота: дождаться очереди, отменить задачи, закрыть соединения."""
         if self._shutdown_started:
             return
@@ -617,6 +701,22 @@ class ParserBot:
 
         logger.info("Shutting down parser...")
         self._running = False
+        # Signal PgNotifyListener instances to stop their run() loops
+        self._shutdown_event.set()
+
+        # Cancel batch flush task first to prevent new flushes during drain
+        if self._batch_flush_task and not self._batch_flush_task.done():
+            self._batch_flush_task.cancel()
+            try:
+                await asyncio.wait_for(self._batch_flush_task, timeout=2.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+
+        # Flush any remaining batched messages before draining workers
+        try:
+            await self._flush_batch()
+        except Exception as e:
+            logger.error(f"Final flush error during shutdown: {e}")
 
         if self._worker_tasks and not self._pending_queue.empty():
             pending = self._pending_queue.qsize()
@@ -633,7 +733,7 @@ class ParserBot:
         tasks = [t for t in (*self._worker_tasks, self._cleanup_listener_task,
                               self._photo_listener_task, self._adaptive_pool_task,
                               self._stale_photo_task)
-                 if t and not t.done()]
+                  if t and not t.done()]
         for task in tasks:
             task.cancel()
         if tasks:
