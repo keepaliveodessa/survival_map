@@ -21,7 +21,7 @@ from pyrogram import Client, filters
 from pyrogram import errors
 from pyrogram.types import Message
 
-from common.settings import settings
+from core.settings import settings
 from common.logging_config import setup_logging
 from common.retry import retry_with_backoff
 from common.pg_listener import PgNotifyListener
@@ -238,11 +238,8 @@ class ParserBot:
             if not self._running:
                 return
 
-            # put_nowait — НЕ блокируем хендлер pyrogram: при полной очереди
-            # QueueFull выбрасывается мгновенно. Вместо дропа пишем сообщение
-            # НАПРЯМУЮ в pending_events (at-least-once): очередь — это буфер
-            # скорости, а не фильтр потерь (раньше переполнение = потеря
-            # события навсегда, без DLQ и повторной выборки).
+            # При переполнении очереди сообщение обрабатывается в обход очереди и добавляется напрямую в batch-буфер.
+            # Это предотвращает потерю события (at-least-once) без блокировки event loop pyrogram, сохраняя эффективность batch-вставки.
             try:
                 self._pending_queue.put_nowait(message)
                 return
@@ -501,6 +498,7 @@ class ParserBot:
             self._batch_buffer = []
         except Exception as e:
             self._errors += len(batch)
+            parser_errors_total.labels(component="batch_flush").inc()
             logger.error(f"Batch insert failed ({len(batch)} messages): {e}")
             raise
 
@@ -693,7 +691,7 @@ class ParserBot:
         if deleted:
             logger.info(f"Stale photos cleaned: {deleted}")
 
-async def shutdown(self, drain_timeout: float = 20.0):
+    async def shutdown(self, drain_timeout: float = 20.0):
         """Корректно остановить бота: дождаться очереди, отменить задачи, закрыть соединения."""
         if self._shutdown_started:
             return

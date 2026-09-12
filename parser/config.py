@@ -15,7 +15,7 @@ _SCALE_UP_QSIZE = 20
 _IDLE_TIMEOUT = 15
 
 # Healthcheck heartbeat interval (seconds)
-_HEARTBEAT_INTERVAL = 5
+_HEARTBEAT_INTERVAL = 1
 
 # Batch insert flush interval (seconds)
 _BATCH_FLUSH_INTERVAL = 0.1

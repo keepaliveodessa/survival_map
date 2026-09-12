@@ -59,7 +59,7 @@ def test_config_has_batch_flush_interval():
 
 def test_config_has_heartbeat_interval():
     assert hasattr(config, "_HEARTBEAT_INTERVAL")
-    assert config._HEARTBEAT_INTERVAL == 5
+    assert config._HEARTBEAT_INTERVAL == 1
 
 
 def test_config_has_queue_maxsize():
