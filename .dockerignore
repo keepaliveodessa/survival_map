@@ -28,7 +28,12 @@ htmlcov/
 .env.local
 .venv/
 venv/
+scripts/venv/
 ENV/
+
+# Python build metadata / coverage
+*.egg-info
+.coverage
 
 # Tests
 tests/

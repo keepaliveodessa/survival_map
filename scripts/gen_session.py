@@ -5,17 +5,19 @@
 `parser/monitoring.py` (`Client(name="session", workdir=".../parser")`), поэтому
 ручной `mv`/`chmod` больше не нужен.
 
-`api_id`/`api_hash` и номер телефона передаются через переменные окружения
-(`PARSER_API_ID`, `PARSER_API_HASH`, `PARSER_PHONE`) и зашиваются внутрь
-`session.session`: в репозитории они не хранятся (`*.session` — в `.gitignore`).
+`api_id`/`api_hash` и номер телефона передаются аргументами командной строки
+и зашиваются внутрь `session.session`: в репозитории они не хранятся
+(`*.session` — в `.gitignore`).
 
 Запуск (в venv с установленными `kurigram` и `qrcode`):
-    PARSER_API_ID=<id> PARSER_API_HASH=<hash> python gen_session.py                                # вход по QR
-    PARSER_API_ID=<id> PARSER_API_HASH=<hash> PARSER_PHONE=+79991234567 python gen_session.py      # вход по телефону + коду
-    SESSION_OUTPUT=/path/to/session.session python gen_session.py  # кастомный путь (по умолчанию — parser/session.session)
+    python scripts/gen_session.py <api_id> <api_hash>                          # вход по QR
+    python scripts/gen_session.py <api_id> <api_hash> --phone +79991234567    # вход по телефону + коду
+    python scripts/gen_session.py <api_id> <api_hash> --session-output /path  # кастомный путь (по умолчанию — parser/session.session)
 """
 
+import argparse
 import os
+import re
 import stat
 import sys
 from pathlib import Path
@@ -25,31 +27,57 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 PARSER_DIR = PROJECT_ROOT / "parser"
-SESSION_FILE = PARSER_DIR / "session.session"
+DEFAULT_SESSION_FILE = PARSER_DIR / "session.session"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Generate a Telegram session file for the parser.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "api_id/api_hash получаются на https://my.telegram.org/apps.\n"
+            "Примеры:\n"
+            "  python scripts/gen_session.py 12345 abcdef0123456789abcdef0123456789  # QR\n"
+            "  python scripts/gen_session.py 12345 abcdef0123456789 --phone +79991234567  # SMS\n"
+        ),
+    )
+    parser.add_argument("api_id", type=str, help="Telegram api_id (целое число)")
+    parser.add_argument("api_hash", type=str, help="Telegram api_hash (32-символьный hex)")
+    parser.add_argument("--phone", type=str, default=None, help="Номер телефона (+X...) для входа по коду")
+    parser.add_argument(
+        "--session-output",
+        type=str,
+        default=str(DEFAULT_SESSION_FILE),
+        help="Путь для сохранения session.session (по умолчанию: parser/session.session)",
+    )
+    return parser.parse_args()
 
 
 def main() -> int:
-    api_id_str = os.environ.get("PARSER_API_ID")
-    api_hash = os.environ.get("PARSER_API_HASH")
-    phone = (os.environ.get("PARSER_PHONE") or "").strip()
-    session_output = os.environ.get("SESSION_OUTPUT", str(SESSION_FILE))
+    args = parse_args()
 
-    if not api_id_str or not api_hash:
+    # api_id — целое число
+    try:
+        api_id = int(args.api_id)
+    except ValueError:
+        print("ERROR: api_id должен быть целым числом", file=sys.stderr)
+        return 1
+
+    if api_id <= 0:
+        print("ERROR: api_id должен быть положительным числом", file=sys.stderr)
+        return 1
+
+    # api_hash — 32-символьный hex (предупреждение, а не ошибка)
+    api_hash = args.api_hash.strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{32}", api_hash):
         print(
-            "ERROR: PARSER_API_ID и PARSER_API_HASH должны быть заданы через "
-            "переменные окружения (G-15). Пример:\n"
-            "  PARSER_API_ID=123 PARSER_API_HASH=abc... \\\n"
-            "  PARSER_PHONE=+79991234567 SESSION_OUTPUT=parser/session.session \\\n"
-            "  python scripts/gen_session.py",
+            "WARNING: api_hash не похож на 32-символьный hex. "
+            "Убедитесь, что значение верное.",
             file=sys.stderr,
         )
-        return 1
 
-    try:
-        api_id = int(api_id_str)
-    except ValueError:
-        print("ERROR: PARSER_API_ID должен быть целым числом", file=sys.stderr)
-        return 1
+    phone = (args.phone or "").strip() if args.phone else ""
+    session_output = args.session_output
 
     try:
         from pyrogram import Client  # модуль ставится пакетом kurigram
@@ -77,7 +105,7 @@ def main() -> int:
     if not phone:
         print("Вход по QR: Telegram → Настройки → Устройства → "
               "«Подключить устройство» → отсканируйте QR ниже.")
-    # use_qr=True показывает QR в терминале (нужен пакет qrcode); PARSER_PHONE
+    # use_qr=True показывает QR в терминале (нужен пакет qrcode); --phone
     # переключает на интерактивный ввод номера + кода (+ пароль 2FA).
     app.start(use_qr=not bool(phone))
     me = app.get_me()
