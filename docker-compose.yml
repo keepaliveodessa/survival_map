@@ -91,6 +91,12 @@ services:
       <<: *pg-env
       POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      # Канал для парсинга (формат -100XXXXXXXXXX). Проброс из .env (H-1):
+      # без этого парсер всегда работал с fallback из common/settings.py,
+      # молча игнорируя CHANNEL_ID из .env. Дефолт здесь синхронизирован с
+      # fallback в settings.py: пустая строка env-переменной НЕ триггерит
+      # fallback в коде (environs возвращает ''), поэтому дефолт задаётся в compose.
+      CHANNEL_ID: ${CHANNEL_ID:--1002050105527}
       PROXY_HOST: ${PROXY_HOST:-}
       PROXY_PORT: ${PROXY_PORT:-1080}
       PROXY_SCHEME: ${PROXY_SCHEME:-socks5}
@@ -260,8 +266,10 @@ services:
     networks:
       - frontend
     healthcheck:
-      # busybox wget (есть в nginx:alpine); curl в образе отсутствует
-      test: ["CMD-SHELL", "wget -qO- http://localhost/health/ready >/dev/null 2>&1 || exit 1"]
+      # busybox wget (есть в nginx:alpine); curl в образе отсутствует.
+      # 127.0.0.1 вместо localhost: nginx слушает только IPv4 (listen 80),
+      # а wget резолвит localhost в ::1 и получает Connection refused.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health/ready >/dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 3

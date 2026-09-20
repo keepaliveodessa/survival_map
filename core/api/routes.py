@@ -29,6 +29,7 @@ from core.api.auth import (
 )
 
 from core.api.media import setup_media_routes
+from core.api.metrics import setup_metrics_routes
 
 
 
@@ -63,5 +64,8 @@ def setup_routes(app: web.Application):
 
     # Media routes (photos)
     setup_media_routes(app)
+
+    # Prometheus metrics export (M-5)
+    setup_metrics_routes(app)
 
     # Static routes удалены — обслуживаются через nginx

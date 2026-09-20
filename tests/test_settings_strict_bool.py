@@ -80,7 +80,11 @@ def test_parse_strict_bool_env_path(caplog):
 
     with tempfile.TemporaryDirectory() as tmp:
         env_file = Path(tmp) / "test.env"
-        env_file.write_text(f"{VAR_NAME}=false\nBOT_TOKEN=x\n")
+        # POSTGRES_PASSWORD обязателен (M-1 fail-fast), но не является предметом
+        # этого теста — кладём валидный заглушечный пароль в env-файл.
+        env_file.write_text(
+            f"{VAR_NAME}=false\nBOT_TOKEN=x\nPOSTGRES_PASSWORD=strict-bool-test-pw\n"
+        )
 
         with caplog.at_level(logging.WARNING):
             s = load_settings(env_path=str(env_file), require_jwt=False)
@@ -99,7 +103,7 @@ def test_load_settings_unset_env_file(caplog):
 
     with tempfile.TemporaryDirectory() as tmp:
         env_file = Path(tmp) / "test.env"
-        env_file.write_text("BOT_TOKEN=x\n")
+        env_file.write_text("BOT_TOKEN=x\nPOSTGRES_PASSWORD=strict-bool-test-pw\n")
 
         with caplog.at_level(logging.WARNING):
             s = load_settings(env_path=str(env_file), require_jwt=False)

@@ -8,9 +8,15 @@
   (asyncpg/rapidfuzz/pymorphy3) are NOT stubbed here; tests needing them skip.
 """
 import importlib.util
+import os
 import sys
 import types
 from pathlib import Path
+
+# common/settings.py теперь fail-fast на POSTGRES_PASSWORD (M-1). Форсируем
+# валидный тестовый пароль ДО импорта любых модулей, чтобы коллекция тестов
+# не зависела от содержимого локального .env (в CI переменная и так задана).
+os.environ["POSTGRES_PASSWORD"] = "ci-test-postgres-password"
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -36,6 +42,10 @@ if _missing("environs"):
             return None
 
         def str(self, name, default=None):
+            # POSTGRES_PASSWORD нужен при импорте common.settings (fail-fast):
+            # отдаём валидный заглушечный пароль вместо default=None.
+            if name == "POSTGRES_PASSWORD":
+                return "ci-stub-postgres-password"
             return default
 
         def bool(self, name, default=None):

@@ -199,7 +199,7 @@ parser/      сервис `parser` (kurigram: канал → очередь pend
 processor/   сервис `processor` (NLP: токенизация → лемматизация → geo → events)
 postgres/    init-скрипты схемы и данные (geo.csv, stopwords.csv)
 web/         фронтенд сервиса `web` (TypeScript + Leaflet/MapLibre, webpack)
-docs/        правила микросервисов (RULES_*.md) + ревью/планы
+docs/        правила микросервисов (RULES_*.md)
 ```
 
 ## Документация

@@ -8,6 +8,7 @@ from conftest import load_module_by_path
 
 settings_mod = load_module_by_path("_settings_under_test", "common/settings.py")
 _resolve_jwt_secret = settings_mod._resolve_jwt_secret
+_resolve_postgres_password = settings_mod._resolve_postgres_password
 load_settings = settings_mod.load_settings
 Settings = settings_mod.Settings
 DatabaseConfig = settings_mod.DatabaseConfig
@@ -86,6 +87,92 @@ class TestDatabaseConfigDefaults:
 
 
 # ============================================================
+# _resolve_postgres_password — безусловный fail-fast (M-1)
+# ============================================================
+
+class TestResolvePostgresPassword:
+    """Безусловная проверка: без ENVIRONMENT-развилки — сервис не стартует
+    с отсутствующим/слабым паролем (по образцу _resolve_jwt_secret, R-C8)."""
+
+    def test_valid_password(self):
+        env = MagicMock()
+        env.str.return_value = "s3cure-passw0rd"
+        assert _resolve_postgres_password(env) == "s3cure-passw0rd"
+
+    def test_missing_raises(self):
+        env = MagicMock()
+        env.str.return_value = None
+        with pytest.raises(RuntimeError, match="POSTGRES_PASSWORD is required"):
+            _resolve_postgres_password(env)
+
+    def test_empty_raises(self):
+        env = MagicMock()
+        env.str.return_value = ""
+        with pytest.raises(RuntimeError, match="POSTGRES_PASSWORD is required"):
+            _resolve_postgres_password(env)
+
+    @pytest.mark.parametrize(
+        "password",
+        ["postgres", "password", "123456", "admin", "root", "changeme", "change-me", "default"],
+    )
+    def test_insecure_defaults_raise(self, password):
+        env = MagicMock()
+        env.str.return_value = password
+        with pytest.raises(RuntimeError, match="insecure default"):
+            _resolve_postgres_password(env)
+
+    def test_insecure_default_case_insensitive(self):
+        env = MagicMock()
+        env.str.return_value = "Postgres"
+        with pytest.raises(RuntimeError, match="insecure default"):
+            _resolve_postgres_password(env)
+
+    def test_too_short_raises(self):
+        env = MagicMock()
+        env.str.return_value = "short"
+        with pytest.raises(RuntimeError, match="too short"):
+            _resolve_postgres_password(env)
+
+    def test_exactly_8_chars_ok(self):
+        env = MagicMock()
+        env.str.return_value = "12345678"
+        assert _resolve_postgres_password(env) == "12345678"
+
+    def test_no_enviroment_escape_hatch(self):
+        """ENVIRONMENT=development больше НЕ отключает проверки (regression M-1)."""
+        env = MagicMock()
+        env.str.return_value = "postgres"
+        with patch.dict(os.environ, {"ENVIRONMENT": "development", "ENV": "development"}):
+            with pytest.raises(RuntimeError, match="insecure default"):
+                _resolve_postgres_password(env)
+
+
+class TestLoadSettingsPassword:
+    def test_load_settings_missing_password_raises(self):
+        """Отсутствие POSTGRES_PASSWORD в env → ValueError (обёрнутый RuntimeError)."""
+        mock_env = MagicMock()
+        mock_env.str.side_effect = lambda key, default=None: {
+            "BOT_TOKEN": "123456:ABC",
+        }.get(key, default)
+
+        with patch.object(settings_mod, "Env", return_value=mock_env):
+            with pytest.raises(ValueError, match="Configuration error"):
+                load_settings(require_jwt=False)
+
+    def test_load_settings_password_from_env(self):
+        """Пароль берётся из env, а не из dataclass-дефолта."""
+        mock_env = MagicMock()
+        mock_env.str.side_effect = lambda key, default=None: {
+            "BOT_TOKEN": "123456:ABC",
+            "POSTGRES_PASSWORD": "from-env-password",
+        }.get(key, default)
+
+        with patch.object(settings_mod, "Env", return_value=mock_env):
+            s = load_settings(require_jwt=False)
+        assert s.db.password == "from-env-password"
+
+
+# ============================================================
 # load_settings — mocked env
 # ============================================================
 
@@ -98,7 +185,7 @@ class TestLoadSettings:
             "REDIRECT_URL": "https://t.me/bot",
             "CHANNEL_ID": "-1002050105527",
             "POSTGRES_USER": "postgres",
-            "POSTGRES_PASSWORD": "postgres",
+            "POSTGRES_PASSWORD": "mocked-env-password",
             "POSTGRES_DB": "postgres",
         }.get(key, default)
         mock_env.bool.return_value = True
@@ -111,15 +198,14 @@ class TestLoadSettings:
         assert s.bot.token == "123456:ABC"
         assert s.bot.webapp_url == "https://example.com"
         assert s.bot.redirect_url == "https://t.me/bot"
-        assert s.db.password == "postgres"
+        assert s.db.password == "mocked-env-password"
 
-    def test_load_settings_postgres_password_default(self):
-        """Current behavior: POSTGRES_PASSWORD defaults to 'postgres'."""
+    def test_load_settings_postgres_password_default_removed(self):
+        """M-1 regression: дефолт 'postgres' удалён — отсутствие пароля = ошибка."""
         mock_env = MagicMock()
         mock_env.str.side_effect = lambda key, default=None: {
             "BOT_TOKEN": "123456:ABC",
             "POSTGRES_USER": "postgres",
-            "POSTGRES_PASSWORD": "postgres",
             "POSTGRES_DB": "postgres",
         }.get(key, default)
         mock_env.bool.return_value = True
@@ -127,17 +213,16 @@ class TestLoadSettings:
         mock_env.str.return_value = "socks5"
 
         with patch.object(settings_mod, "Env", return_value=mock_env):
-            s = load_settings(require_jwt=False)
-
-        assert s.db.password == "postgres"
+            with pytest.raises(ValueError, match="Configuration error"):
+                load_settings(require_jwt=False)
 
     def test_load_settings_channel_id_fallback(self):
-        """Current behavior: CHANNEL_ID has hardcoded fallback."""
+        """CHANNEL_ID has hardcoded fallback in load_settings."""
         mock_env = MagicMock()
         mock_env.str.side_effect = lambda key, default=None: {
             "BOT_TOKEN": "123456:ABC",
+            "POSTGRES_PASSWORD": "mocked-env-password",
             "POSTGRES_USER": "postgres",
-            "POSTGRES_PASSWORD": "postgres",
             "POSTGRES_DB": "postgres",
         }.get(key, default)
         mock_env.bool.return_value = True
@@ -168,7 +253,6 @@ class TestLoadSettings:
         with patch.object(settings_mod, "Env", return_value=mock_env):
             s = load_settings(require_jwt=False)
         assert s.jwt is None
-
 
 # ============================================================
 # Settings dataclass instantiation

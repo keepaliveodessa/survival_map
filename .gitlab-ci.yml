@@ -29,8 +29,10 @@ variables:
   PYTHON_IMAGE: python:3.11-slim-bookworm
   # CI: fix pytest-asyncio mode (was causing 15 async test failures)
   PYTEST_ADDOPTS: "--asyncio-mode=auto"
-  # Dummy env for tests (fixes settings test AttributeError on NoneType)
-  POSTGRES_PASSWORD: "postgres"
+  # Dummy env for tests (fixes settings test AttributeError on NoneType).
+  # M-1: пароль должен проходить безусловный fail-fast в common/settings.py
+  # (не insecure-дефолт, длина >= 8).
+  POSTGRES_PASSWORD: "ci-dummy-postgres-password"
   POSTGRES_USER: "postgres"
   POSTGRES_DB: "postgres"
   TELEGRAM_WEBVIEW_VALIDATION: "false"
@@ -85,7 +87,7 @@ check-local-prerequisites:
       # 2. Проверка наличия .env
       if [ ! -f ".env" ]; then
         echo "ОШИБКА: Файл .env не найден!"
-        echo "Запустите './prepare-deploy.sh' вручную."
+        echo "Создайте его вручную: cp .env.example .env и заполните секреты."
         exit 1
       fi
       echo "OK: .env найден"
@@ -287,17 +289,22 @@ test:core-startup-matrix:
         EXPECTED_BOOL: "True"
         EXPECTED_LOG_WARNING: "false"
   before_script:
-    - pip install -q -r requirements.txt environs==11.2.1
+    # common.settings импортирует только environs — тяжёлые deps не нужны.
+    - pip install -q environs==11.2.1
   script:
-    # PYTHONPATH=. fixes "No module named 'core'" in CI
-    - PYTHONPATH=. python scripts/ci_check_webview_validation.py "$TEST_ENV_VALUE" "$EXPECTED_BOOL" "$EXPECTED_LOG_WARNING"
+    # H-2: раньше вызывался scripts/ci_check_webview_validation.py, удалённый
+    # в 719f749 — джоба падала на каждом пайплайне. Логика восстановлена в
+    # scripts/ci_matrix_check.py: значения комбинации приходят из
+    # parallel:matrix переменными окружения (TEST_ENV_VALUE / EXPECTED_BOOL /
+    # EXPECTED_LOG_WARNING), скрипт читает их из os.environ.
+    - PYTHONPATH=. python scripts/ci_matrix_check.py
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - changes:
         - common/settings.py
         - core/app_factory.py
-        - scripts/ci_check_webview_validation.py
+        - scripts/ci_matrix_check.py
         - .gitlab-ci.yml
 
 common-invariant:

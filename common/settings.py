@@ -97,9 +97,10 @@ class DatabaseConfig:
     port: int = 5432  # may be overridden by POSTGRES_PORT
     database: str = "postgres"
     user: str = "postgres"
-    # Пустая строка — явно невалидный дефолт: при отсутствии POSTGRES_PASSWORD
-    # в env подключение упадёт с ошибкой аутентификации, а не молча использует
-    # слабый пароль "postgres".
+    # Пароль не имеет дефолта: резолвится из env POSTGRES_PASSWORD в load_settings
+    # через _resolve_postgres_password с безусловным fail-fast (M-1): отсутствие/
+    # пустое значение, небезопасные дефолты ('postgres', 'admin', ...) и длина
+    # < 8 символов роняют сервис на старте — по образцу _resolve_jwt_secret (R-C8).
     password: str = ""
     # Прямое подключение: каждый коннект = backend process в postgres.
     # 3 сервиса × pool_max_size=10 = 30 max. Under max_connections=50.
@@ -128,8 +129,9 @@ class AppConfig:
 @dataclass
 class BotConfig:
     token: str
-    # channel_id читается из env CHANNEL_ID (см. load_settings).
-    # Дефолт "-1002050105527" оставлен только как fallback в load_settings,
+    # channel_id читается из env CHANNEL_ID (см. load_settings) и пробрасывается
+    # в контейнер parser через docker-compose.yml. Дефолт "-1002050105527"
+    # оставлен только как fallback в load_settings (и в дефолте compose),
     # не в dataclass — чтобы избежать появления production-ID в git-истории
     # при смене деплоймента.
     channel_id: str
@@ -281,15 +283,26 @@ class Settings:
 
 
 def _resolve_postgres_password(env: Env) -> str:
-    """Validate POSTGRES_PASSWORD with fail-fast on insecure defaults.
-    
-    Security requirements:
-    - Must not be empty in production
-    - Must not use insecure default passwords
-    - Minimum length 8 characters for production
+    """Validate POSTGRES_PASSWORD with UNCONDITIONAL fail-fast on insecure values.
+
+    Security requirements (M-1: раньше проверки срабатывали только при
+    ENVIRONMENT=production, но ENVIRONMENT нигде не задавался — fail-open):
+    - значение ОБЯЗАТЕЛЬНО: отсутствие/пустая строка → RuntimeError;
+    - небезопасные дефолты ('postgres', 'password', ...) → RuntimeError;
+    - минимальная длина 8 символов → иначе RuntimeError.
+
+    По образцу _resolve_jwt_secret (R-C8): сервис не стартует с небезопасной
+    конфигурацией. docker-compose дублирует защиту на уровне оркестрации
+    (${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env} — проверяет unset/empty).
     """
-    password = env.str("POSTGRES_PASSWORD", "postgres")
-    
+    password = env.str("POSTGRES_PASSWORD", None)
+
+    if not password:
+        raise RuntimeError(
+            "FATAL: POSTGRES_PASSWORD is required in environment. "
+            "Set a strong password (min 8 chars) in .env."
+        )
+
     insecure_passwords = {
         "postgres",
         "password",
@@ -300,32 +313,20 @@ def _resolve_postgres_password(env: Env) -> str:
         "change-me",
         "default",
     }
-    
-    # Check for insecure defaults
+
+    # Небезопасные дефолты запрещены всегда (не только в production).
     if password.lower() in insecure_passwords:
-        import os
-        env_name = os.environ.get("ENVIRONMENT", os.environ.get("ENV", "development"))
-        if env_name.lower() in ("production", "prod", "staging", "stage"):
-            raise RuntimeError(
-                "FATAL: POSTGRES_PASSWORD uses insecure default in production environment. "
-                "Set a strong password (min 8 chars)."
-            )
-        # Log warning for non-production environments
-        import logging
-        logging.getLogger(__name__).warning(
-            "POSTGRES_PASSWORD uses insecure default. "
-            "This is acceptable for development but MUST be changed in production."
+        raise RuntimeError(
+            "FATAL: POSTGRES_PASSWORD uses an insecure default — "
+            "set a strong password (min 8 chars)."
         )
-    
+
     # Minimum length check
     if len(password) < 8:
-        import os
-        env_name = os.environ.get("ENVIRONMENT", os.environ.get("ENV", "development"))
-        if env_name.lower() in ("production", "prod", "staging", "stage"):
-            raise RuntimeError(
-                f"FATAL: POSTGRES_PASSWORD too short (got {len(password)} chars, need >= 8)."
-            )
-    
+        raise RuntimeError(
+            f"FATAL: POSTGRES_PASSWORD too short (got {len(password)} chars, need >= 8)."
+        )
+
     return password
 
 
@@ -359,9 +360,8 @@ def load_settings(env_path: Optional[str] = None, require_jwt: bool = True) -> S
     изменить калибровку матчера / параметры БД / прокси и т.п., правится
     `common/settings.py` напрямую (не env).
 
-    Keep-list env: BOT_TOKEN, WEBAPP_URL, REDIRECT_URL. JWT_SECRET — обязателен
-    при require_jwt=True (R-C8).
-    CHANNEL_ID захардкожен в BotConfig (не env).
+    Keep-list env: BOT_TOKEN, WEBAPP_URL, REDIRECT_URL, CHANNEL_ID.
+    JWT_SECRET — обязателен при require_jwt=True (R-C8).
     """
     env = Env()
     env.read_env(env_path)

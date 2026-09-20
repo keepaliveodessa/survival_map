@@ -90,7 +90,8 @@ run_job "test:settings-strict-bool" "python:3.11-slim-bookworm" \
     "pip install --quiet -r requirements-dev.txt environs==11.2.1 pytest pytest-asyncio && \
      pytest -q tests/test_settings_strict_bool.py --tb=short"
 
-# Matrix: 4 combos
+# Matrix: 4 combos. H-2: раньше вызывался scripts/ci_check_webview_validation.py,
+# удалённый в 719f749 — логика восстановлена в scripts/ci_matrix_check.py.
 MATRIX_COMBOS=(
     'UNSET True false'
     'false False true'
@@ -102,7 +103,7 @@ for combo in "${MATRIX_COMBOS[@]}"; do
     read -r TEST_ENV_VALUE EXPECTED_BOOL EXPECTED_LOG_WARNING <<< "$combo"
     run_job "test:core-startup-matrix [${TEST_ENV_VALUE}]" "python:3.11-slim-bookworm" \
         "pip install --quiet environs==11.2.1 && \
-         python scripts/ci_check_webview_validation.py '${TEST_ENV_VALUE}' '${EXPECTED_BOOL}' '${EXPECTED_LOG_WARNING}'"
+         PYTHONPATH=. python scripts/ci_matrix_check.py '${TEST_ENV_VALUE}' '${EXPECTED_BOOL}' '${EXPECTED_LOG_WARNING}'"
 done
 
 run_job "frontend-build" "node:22-alpine" \
