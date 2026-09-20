@@ -410,13 +410,23 @@ build:postgres:
 
 trivy-scan:
   stage: image-security
-  image: aquasec/trivy:latest
+  image:
+    name: aquasec/trivy:latest
+    # ENTRYPOINT образа — сам trivy; runner оборачивает script в `sh -c`,
+    # и trivy получал `sh` как подкоманду (unknown command "sh"). Пустой
+    # entrypoint возвращает обычную shell-оболочку образа.
+    entrypoint: [""]
   cache:
     key: trivy-cache-$CI_COMMIT_REF_SLUG
     paths:
       - .trivycache/
   variables:
     TRIVY_CACHE_DIR: ".trivycache"
+    # Свежесобранные образы пушатся в приватный CI_REGISTRY (build:* → push).
+    # Без кредов trivy падает на docker login/pull при скане по имени образа.
+    TRIVY_USERNAME: $CI_REGISTRY_USER
+    TRIVY_PASSWORD: $CI_REGISTRY_PASSWORD
+    TRIVY_INSECURE: "true"
   script:
     - trivy image --severity HIGH,CRITICAL --exit-code 1 $CI_REGISTRY_IMAGE/core:$CI_COMMIT_SHA
     - trivy image --severity HIGH,CRITICAL --exit-code 1 $CI_REGISTRY_IMAGE/parser:$CI_COMMIT_SHA

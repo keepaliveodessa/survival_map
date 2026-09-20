@@ -92,13 +92,19 @@ inline-python. Заодно вычистить упоминание prepare-depl
 
 ### 🔴 H-3. (конфигурация окружения) Публичный доступ к незащищённому стенду
 
-> **Статус: `.env` исправлен, НО ещё не применён к контейнеру core** (проверено
-> после первого рестарта): web пересобран (nginx `/metrics` → 404, фикс M-5
-> активен), однако core всё ещё работает в dev-bypass — `/api/validate-init`
-> с пустым body выдаёт dev-JWT, `/api/events` без токена → 200.
-> ВАЖНО: `docker compose restart core` НЕ применяет новую env — переменные
-> зашиваются при создании контейнера. Нужен именно пересоздание:
-> `docker compose up -d core` (или полный `up -d`).
+> **Статус: `.env` исправлен, НО ЕЩЁ НЕ ПРИМЕНЁН к контейнеру core**
+> (проверено дважды, 15:23 и 16:05 UTC): web пересобран (nginx `/metrics` → 404,
+> фикс M-5 активен), однако core работает в dev-bypass:
+> `/api/events`, `/api/geo`, `/api/config` без токена → 200;
+> `/api/validate-init` с пустым body → 200 (dev-JWT).
+> Runtime-улика: поле uptime в /health/detailed (= epoch старта процесса)
+> ИДЕНТИЧНО в проверках 15:23 и 16:05 (1789915920.07) — процесс core не
+> перезапускался с ~14:52 UTC, т.е. `docker compose up -d core` не дошёл
+> до контейнера (не выполнялся / выполнен из другой директории / был `restart`,
+> который env не перепрочитывает).
+> Для применения (из корня проекта): `docker compose up -d core`, затем
+> `curl -s -o /dev/null -w '%{http_code}' -X POST localhost/api/events \
+>   -H 'Content-Type: application/json' -d '{"time_filter":15}'` → должен стать 401.
 > Примечание: `REDIRECT_URL=http://shodan.io` выглядит как dev-заглушка — после
 > включения валидации именно туда будет уходить не-Telegram трафик; стоит
 > задать осмысленный URL (или пусто — gate-fallback).

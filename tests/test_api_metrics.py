@@ -78,7 +78,7 @@ class TestMetricsHandler:
 # Интеграция: маршрутизация + JWT-middleware (как в проде)
 # ============================================================
 
-async def _client_get(path: str, validation_enabled: bool) -> 'TestClient':
+async def _client_request(method: str, path: str, validation_enabled: bool):
     from common.settings import settings
 
     old = settings.app.telegram_webview_validation
@@ -86,8 +86,8 @@ async def _client_get(path: str, validation_enabled: bool) -> 'TestClient':
     try:
         client = TestClient(TestServer(_make_app()))
         await client.start_server()
-        # middleware читает флаг при каждом запросе — мутация синглтона до get() корректна.
-        resp = await client.get(path)
+        # middleware читает флаг при каждом запросе — мутация синглтона до запроса корректна.
+        resp = await client.request(method, path)
         return client, resp
     finally:
         settings.app.telegram_webview_validation = old
@@ -103,7 +103,7 @@ class TestMetricsRouting:
     @pytest.mark.asyncio
     async def test_validation_on_requires_token(self):
         """TELEGRAM_WEBVIEW_VALIDATION=true → /metrics закрыт без токена (401)."""
-        client, resp = await _client_get('/metrics', validation_enabled=True)
+        client, resp = await _client_request('GET', '/metrics', validation_enabled=True)
         try:
             assert resp.status == 401
         finally:
@@ -112,7 +112,7 @@ class TestMetricsRouting:
     @pytest.mark.asyncio
     async def test_dev_bypass_open(self):
         """TELEGRAM_WEBVIEW_VALIDATION=false → /metrics открыт (dev-режим)."""
-        client, resp = await _client_get('/metrics', validation_enabled=False)
+        client, resp = await _client_request('GET', '/metrics', validation_enabled=False)
         try:
             assert resp.status == 200
             body = await resp.text()
@@ -122,10 +122,15 @@ class TestMetricsRouting:
 
     @pytest.mark.asyncio
     async def test_get_only(self):
-        client = TestClient(TestServer(_make_app()))
-        await client.start_server()
+        """POST /metrics → 405 (router-level).
+
+        ВАЖНО (regression CI): проверка только в dev-режиме. JWT-middleware
+        выполняется ДО роутера, поэтому при validation=true POST без токена
+        получает 401 раньше, чем роутер успевает вернуть 405 — тест был
+        env-зависим и падал в job integration-tests (там validation=true).
+        """
+        client, resp = await _client_request('POST', '/metrics', validation_enabled=False)
         try:
-            resp = await client.post('/metrics')
             assert resp.status == 405
         finally:
             await client.close()
