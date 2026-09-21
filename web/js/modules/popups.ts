@@ -165,10 +165,16 @@ function showLegendPopup(): void {
         </p>
         <div style="padding-top: 16px; border-top: 1px solid var(--tg-hint-color, #e0e0e0);">
             <p style="margin: 0 0 10px 0; color: var(--tg-text-color, #000); font-size: 14px; line-height: 1.5;">
-                <strong style="color: #dc3545;">● Красный круг/контур</strong> — точное место (перекресток либо объект)
+                <strong style="color: #dc3545;">● Красный</strong> — до 15 минут
             </p>
-            <p style="margin: 0; color: var(--tg-text-color, #000); font-size: 14px; line-height: 1.5;">
-                <strong style="color: #007bff;">● Синяя линия</strong> — улица (без пересечений)
+            <p style="margin: 0 0 10px 0; color: var(--tg-text-color, #000); font-size: 14px; line-height: 1.5;">
+                <strong style="color: #0d6efd;">● Синий</strong> — до 30 минут
+            </p>
+            <p style="margin: 0 0 10px 0; font-size: 14px; line-height: 1.5;">
+                <strong style="color: #999; text-shadow: 0 0 2px rgba(0,0,0,0.3);">● Белый</strong> — до 60 минут
+            </p>
+            <p style="margin: 0; color: var(--tg-hint-color, #888); font-size: 13px; line-height: 1.4;">
+                Круг/контур — точное место; линия — улица
             </p>
         </div>
     `;

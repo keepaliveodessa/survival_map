@@ -46,6 +46,23 @@ window.createMarker = function(_map: L.Map, latLng: L.LatLng, properties: Record
     return marker;
 };
 
+function getGeometryColors(properties: Record<string, unknown>): { color: string; fillColor: string } {
+    const raw = properties.time ?? properties.created_at ?? properties.timestamp;
+    if (raw == null) return { color: '#dc3545', fillColor: '#dc3545' };
+    let value: string | number = raw as string | number;
+    if (typeof value === 'string') {
+        let normalized = value.trim().replace(' ', 'T');
+        if (!/([zZ]|[+-]\d{2}:?\d{2})$/.test(normalized)) normalized += 'Z';
+        value = normalized;
+    }
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return { color: '#dc3545', fillColor: '#dc3545' };
+    const ageMs = window.serverNow() - d.getTime();
+    if (ageMs <= 15 * 60 * 1000) return { color: '#dc3545', fillColor: '#dc3545' };
+    if (ageMs <= 30 * 60 * 1000) return { color: '#0d6efd', fillColor: '#0d6efd' };
+    return { color: '#ffffff', fillColor: '#ffffff' };
+}
+
 window.createCircle = function(_map: L.Map, coords: number[], properties: Record<string, unknown>, strategy?: string): L.Layer[] {
     const latLng = L.latLng(coords[1], coords[0]);
     const marker = window.createMarker(_map, latLng, properties as Record<string, unknown>);
@@ -58,9 +75,10 @@ window.createCircle = function(_map: L.Map, coords: number[], properties: Record
     }
 
     // Для маркеров с точным местоположением добавляем круг радиусом 200м
+    const colors = getGeometryColors(properties);
     const circle = L.circle(latLng, {
-        color: 'red',
-        fillColor: '#f03',
+        color: colors.color,
+        fillColor: colors.fillColor,
         fillOpacity: 0.5,
         radius: 200,
         weight: 0
@@ -104,7 +122,8 @@ window.getPolylineMidpoint = function(latLngs: L.LatLng[]): L.LatLng | null {
 
 window.createPolyline = function(map: L.Map, coords: [number, number][], properties: Record<string, unknown>): L.Layer[] {
     const latLngs = coords.map((c: [number, number]) => L.latLng(c[1], c[0]));
-    const polyline = L.polyline(latLngs, { color: 'blue', weight: 3 });
+    const colors = getGeometryColors(properties);
+    const polyline = L.polyline(latLngs, { color: colors.color, weight: 3 });
     polyline.bindPopup(window.createPopupContent(properties));
 
     const markerPosition = window.getPolylineMidpoint(latLngs);
@@ -113,14 +132,12 @@ window.createPolyline = function(map: L.Map, coords: [number, number][], propert
     return [polyline, marker];
 };
 
-// Общий стиль заливки для (мульти)полигонов событий.
-const _POLYGON_STYLE = { color: 'red', weight: 2, fillColor: '#f03', fillOpacity: 0.2 };
-
 window.createPolygon = function(map: L.Map, coords: [number, number][][] , properties: Record<string, unknown>): L.Layer[] {
     // GeoJSON Polygon: coords = [ outerRing, hole1, ... ]. Передаём ВСЕ кольца
     // (поддержка дыр), а не только внешнее (было coords[0] — дыры терялись).
     const latLngs = coords.map((ring: [number, number][]) => ring.map((c: [number, number]) => L.latLng(c[1], c[0])));
-    const polygon = L.polygon(latLngs, _POLYGON_STYLE);
+    const colors = getGeometryColors(properties);
+    const polygon = L.polygon(latLngs, { color: colors.color, weight: 2, fillColor: colors.fillColor, fillOpacity: 0.2 });
     polygon.bindPopup(window.createPopupContent(properties));
 
     const marker = window.createMarker(map, polygon.getBounds().getCenter(), properties);
@@ -134,7 +151,8 @@ window.createMultiPolygon = function(map: L.Map, coords: [number, number][][][],
     const latLngs = coords.map((polygon: [number, number][][]) =>
         polygon.map((ring: [number, number][]) => ring.map((c: [number, number]) => L.latLng(c[1], c[0])))
     );
-    const polygon = L.polygon(latLngs, _POLYGON_STYLE);
+    const colors = getGeometryColors(properties);
+    const polygon = L.polygon(latLngs, { color: colors.color, weight: 2, fillColor: colors.fillColor, fillOpacity: 0.2 });
     polygon.bindPopup(window.createPopupContent(properties));
 
     const marker = window.createMarker(map, polygon.getBounds().getCenter(), properties);
@@ -148,7 +166,8 @@ window.createMultiLineString = function(map, coords, properties) {
     for (const line of coords) {
         const latLngs = line.map(c => L.latLng(c[1], c[0]));
         allLatLngs = allLatLngs.concat(latLngs);
-        const polyline = L.polyline(latLngs, { color: 'blue', weight: 3 });
+        const colors = getGeometryColors(properties);
+        const polyline = L.polyline(latLngs, { color: colors.color, weight: 3 });
         polyline.bindPopup(window.createPopupContent(properties));
         elements.push(polyline);
     }
