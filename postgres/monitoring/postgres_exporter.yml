@@ -1,0 +1,28 @@
+# postgres_exporter (>= v0.18) — collectors задаются флагами, этот файл
+# опционален. В compose НЕ монтируется (старый PG_EXPORTER_DB_QUERIES_CONFIG_PATH
+# удалён вместе с механизмом custom-queries в v0.18+). Оставлен как документация
+# активных collectors — состав синхронизирован с docker-compose (дефолты v0.20.x).
+#
+# Включённые по умолчанию collectors:
+#   database              — pg_stat_database: транзакции, tuples, конфликты, temp
+#   locks                 — pg_locks: ожидания блокировок (deadlock detection)
+#   replication           — pg_stat_replication / pg_replication_slots (на будущее)
+#   replication_slot      — слоты репликации (wal retained)
+#   stat_bgwriter         — checkpoints, buffers backend/через bgwriter
+#   stat_database         — xact_commit/rollback, blks_hit (cache hit ratio)
+#   stat_progress_vacuum  — прогресс autovacuum
+#   stat_user_tables      — seq_scan/idx_scan, n_tup_ins/upd/del, dead tuples
+#   statio_user_tables    — I/O по таблицам (heap/index reads)
+#   wal                   — WAL-сегменты, archiver
+#
+# Основные метрики для дашборда Overview:
+#   pg_stat_database_xact_commit / _xact_rollback          — TPS
+#   pg_stat_database_blks_hit / _blks_read                 — cache hit ratio
+#   pg_locks_count{mode=...}                               — ожидания блокировок
+#   pg_stat_user_tables_n_dead_tup                         — раздувание таблиц
+#   pg_stat_activity_count{state=active/waiting}           — сессии (v0.20: часть database collector'а)
+#
+# Если понадобятся кастомные SQL-метрики (pending_events depth, events rate) —
+# поднять collector stat_statements либо перейти на prometheus-community/postgres_exporter
+# с agent-режимом / SQL exporter (например, минимальный sidecar на cron).
+# Для pending_events глубина уже видна из processor:8765 (см. dashboard overview).

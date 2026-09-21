@@ -1,0 +1,16 @@
+# Grafana — file-provisioner для дашбордов из postgres/monitoring/grafana/dashboards/.
+# JSON-файлы монтируются read-only в /var/lib/grafana/dashboards (compose).
+apiVersion: 1
+
+providers:
+  - name: survival-map
+    orgId: 1
+    folder: Survival Map
+    folderUid: survival-map
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

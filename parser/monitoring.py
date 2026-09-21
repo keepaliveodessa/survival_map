@@ -34,6 +34,14 @@ setup_logging(
 
 from common.db_adapter import DBAdapter
 from common.text_preprocessor import strip_tail, preprocess_light, truncate_for_geo, sanitize_text
+from common.metrics import (
+    parser_messages_processed_total,
+    parser_messages_errors_total,
+    parser_queue_size,
+    parser_backpressure_active,
+    start_metrics_server,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +76,10 @@ class ParserBot:
         self.events_media_dir = settings.parser.events_media_dir
 
         self._pending_queue: asyncio.Queue = asyncio.Queue(maxsize=65)
+        # Prometheus-гейджи очереди/backpressure стартуют в известном состоянии,
+        # а не с дефолтом prometheus_client (0 после первой выборки и так верен).
+        parser_queue_size.set(0)
+        parser_backpressure_active.set(0)
         self._worker_tasks: list[asyncio.Task] = []
         self._worker_seq = 0
         self._adaptive_pool_task: Optional[asyncio.Task] = None
@@ -207,6 +219,14 @@ class ParserBot:
 
         logger.info("🚀 Starting parser bot...")
 
+        # Метрики для prometheus (9100) — до основных подсистем, чтобы скрейп
+        # был доступен даже при проблемах с историей/слушателями. Сервер не
+        # роняет парсер: при ошибке в лог уходит warning (см. common.metrics).
+        if start_metrics_server(9100):
+            logger.info("Prometheus metrics server started on port 9100")
+        else:
+            logger.warning("Metrics server not started on port 9100")
+
         target_filter = filters.chat(int(self.channel_id)) & (
             filters.text | filters.caption | filters.photo
         )
@@ -223,6 +243,7 @@ class ParserBot:
             # события навсегда, без DLQ и повторной выборки).
             try:
                 self._pending_queue.put_nowait(message)
+                parser_messages_processed_total.inc()
                 return
             except asyncio.QueueFull:
                 logger.warning(
@@ -236,6 +257,7 @@ class ParserBot:
                 await self._process_message(message)
             except Exception as e:
                 self._errors += 1
+                parser_messages_errors_total.inc()
                 logger.error(f"Message {message.id}: direct write failed: {e}")
 
         try:
@@ -333,6 +355,9 @@ class ParserBot:
                 break
             qsize = self._pending_queue.qsize()
             n_workers = len(self._worker_tasks)
+            # Экспорт состояния очереди в Prometheus (каждые 3s цикла).
+            parser_queue_size.set(qsize)
+            parser_backpressure_active.set(1 if self._backpressure_active else 0)
             
             # Backpressure: если очередь почти полная, замедляем прием
             if qsize >= 60:  # 60/65 = 92% full
@@ -370,6 +395,7 @@ class ParserBot:
                 await self._process_message_with_retries(message)
             except Exception as e:
                 self._errors += 1
+                parser_messages_errors_total.inc()
                 logger.error(
                     f"Worker {worker_id}: message {message.id} failed permanently: {e}"
                 )
@@ -421,6 +447,7 @@ class ParserBot:
                 message_id, preserved, self._to_kiev(message.date), photo_file_id,
             )
             self._messages_processed += 1
+            parser_messages_processed_total.inc()
             elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
             logger.debug(
                 f"Message {message_id} enqueued in {elapsed:.2f}s "

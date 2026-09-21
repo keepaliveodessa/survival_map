@@ -6,7 +6,17 @@ from datetime import datetime, timezone
 
 from aiohttp import web
 
+from common.metrics import (  # noqa: F401 — регистрация в REGISTRY при импорте
+    processor_messages_processed_total,
+    processor_messages_errors_total,
+    processor_messages_expired_total,
+    processor_worker_active,
+    processor_circuit_breaker_state,
+)
+
 logger = logging.getLogger(__name__)
+
+METRICS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
 
 class HealthServer:
@@ -58,11 +68,32 @@ class HealthServer:
 
         return web.Response(text="OK")
 
+    async def handle_metrics(self, request):
+        """Экспорт Prometheus-метрик processor (скрейп prometheus'ом).
+
+        Порт 8765 торчит только в docker-сети (expose, не ports) —
+        наружу метрики не уходят, аналогично /metrics у core.
+        Если prometheus_client отсутствует в окружении (локальный запуск
+        без полной установки), общие счётчики — no-op, но процессные
+        метрики (python_info, process_*) всё равно экспортируются.
+        """
+        from prometheus_client import REGISTRY, generate_latest
+
+        payload = generate_latest(REGISTRY)
+        return web.Response(
+            body=payload,
+            headers={
+                "Content-Type": METRICS_CONTENT_TYPE,
+                "Cache-Control": "no-store",
+            },
+        )
+
     async def start(self, port: int = 8765):
         """Запуск HTTP-сервера healthcheck."""
         app = web.Application()
         app.router.add_get("/health/live", self.handle_live)
         app.router.add_get("/health/ready", self.handle_ready)
+        app.router.add_get("/metrics", self.handle_metrics)
 
         runner = web.AppRunner(app)
         await runner.setup()

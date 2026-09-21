@@ -9,5 +9,8 @@ asyncpg==0.30.0
 # Configuration (через core.settings)
 environs==11.2.1
 
+# Prometheus instrumentation (/metrics на 9100, экспорт common.metrics)
+prometheus_client==0.26.0
+
 # Timezone data
 tzdata==2024.1

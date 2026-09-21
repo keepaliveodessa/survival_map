@@ -1,0 +1,20 @@
+# Grafana — автопровижининг datasource Loki.
+# Логи контейнеров собирает promtail (docker_sd → Loki) с лейблами:
+#   service (имя compose-сервиса), container, compose_project, stream.
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      maxLines: 1000
+      # Подсказки derived fields в логах (например, event_id → ссылка на карту)
+      derivedFields:
+        - name: event_id
+          matcherRegex: "event_id=(\\d+)"
+          url: "$__value"
+          urlDisplayMode: auto

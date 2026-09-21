@@ -1,0 +1,243 @@
+{
+  "uid": "survival-overview",
+  "title": "Survival Map — Overview",
+  "tags": ["survival-map"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Parser",
+      "description": "up{job=\"parser\"} — Telegram-клиент и запись в pending_events",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 3, "x": 0, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "up{job=\"parser\"}", "legendFormat": "parser" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }]
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "NLP Processor",
+      "description": "up{job=\"nlp_processor\"} — NLP-конвейер",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 3, "x": 3, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "up{job=\"nlp_processor\"}", "legendFormat": "processor" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }]
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "PostgreSQL",
+      "description": "up{job=\"postgres\"} — через postgres_exporter",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 3, "x": 6, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "up{job=\"postgres\"}", "legendFormat": "postgres" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }]
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Core API",
+      "description": "up{job=\"core\"} — API/WebSocket сервер",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 3, "x": 9, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "up{job=\"core\"}", "legendFormat": "core" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }]
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Events rate (5m)",
+      "description": "Скорость записи событий NLP-процессором",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 3, "x": 12, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "sum(rate(processor_messages_processed_total[5m]))", "legendFormat": "events/s" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "area", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Parser queue",
+      "description": "Размер внутренней очереди parser (0..65)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 3, "x": 15, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "parser_queue_size", "legendFormat": "queue" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 65,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 40 }, { "color": "red", "value": 60 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "area", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Backpressure",
+      "description": "parser_backpressure_active: 1 = прямая запись в БД (очередь >= 60/65)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 3, "x": 18, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "max(parser_backpressure_active)", "legendFormat": "backpressure" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] },
+          "mappings": [{ "type": "value", "options": { "0": { "text": "OK", "color": "green" }, "1": { "text": "ACTIVE", "color": "red" } } }]
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Cache hit ratio",
+      "description": "pg_stat_database: blks_hit / (blks_hit + blks_read)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 3, "x": 21, "y": 0 },
+      "targets": [{
+        "refId": "A",
+        "expr": "sum(rate(pg_stat_database_blks_hit{datname=\"postgres\"}[5m])) / (sum(rate(pg_stat_database_blks_hit{datname=\"postgres\"}[5m])) + sum(rate(pg_stat_database_blks_read{datname=\"postgres\"}[5m])))",
+        "legendFormat": "hit ratio"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 0.9 }, { "color": "green", "value": 0.98 }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "area", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Parser — messages/s и очередь",
+      "description": "Поток сообщений Telegram в pending_events и состояние очереди",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "rate(parser_messages_processed_total[5m])", "legendFormat": "processed/s" },
+        { "refId": "B", "expr": "rate(parser_messages_errors_total[5m])", "legendFormat": "errors/s" },
+        { "refId": "C", "expr": "parser_queue_size", "legendFormat": "queue size" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Processor — throughput и воркеры",
+      "description": "Обработка pending_events: processed/errors/expired и активные воркеры",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "rate(processor_messages_processed_total[5m])", "legendFormat": "processed/s" },
+        { "refId": "B", "expr": "rate(processor_messages_errors_total[5m])", "legendFormat": "errors/s" },
+        { "refId": "C", "expr": "rate(processor_messages_expired_total[5m])", "legendFormat": "expired/s" },
+        { "refId": "D", "expr": "processor_worker_active", "legendFormat": "active workers" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Core — HTTP rate по статусам",
+      "description": "sum(rate(http_requests_total[5m])) by (status)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "targets": [{ "refId": "A", "expr": "sum(rate(http_requests_total[5m])) by (status)", "legendFormat": "HTTP {{status}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Core — HTTP latency p50/p95",
+      "description": "histogram_quantile по http_request_duration_seconds_bucket",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "PostgreSQL — TPS и блокировки",
+      "description": "xact_commit/xact_rollback в секунду и суммарные ожидания блокировок",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "rate(pg_stat_database_xact_commit{datname=\"postgres\"}[5m])", "legendFormat": "commit/s" },
+        { "refId": "B", "expr": "rate(pg_stat_database_xact_rollback{datname=\"postgres\"}[5m])", "legendFormat": "rollback/s" },
+        { "refId": "C", "expr": "sum(pg_locks_count)", "legendFormat": "locks" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    }
+  ]
+}

@@ -23,6 +23,10 @@ PUBLIC_ENDPOINTS: Set[str] = {
     '/api/validation-config',  # Needed to determine if validation is enabled
     '/api/validate-init',      # Used to get JWT tokens (has its own validation)
     '/api/auth/refresh',       # Used to refresh JWT tokens
+    # Prometheus-скрейп из docker-сети (prometheus в backend/monitoring).
+    # Снаружи /metrics закрыт nginx (location = /metrics { return 404; }),
+    # а порт 8080 только expose в docker-сети — публичной экспозиции нет.
+    '/metrics',
 }
 
 

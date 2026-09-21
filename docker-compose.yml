@@ -113,6 +113,10 @@ services:
     networks:
       - backend
       - db
+    # Prometheus-метрики (start_http_server в parser/monitoring.py).
+    # expose, не ports: скрейп только из docker-сети (prometheus в backend).
+    expose:
+      - "9100"
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/parser_heartbeat && [ $$(( $$(date +%s) - $$(cat /tmp/parser_heartbeat) )) -lt 60 ]"]
       interval: 30s
@@ -304,20 +308,68 @@ services:
 
 # =============================================================================
   # =============================================================================
+  # cAdvisor - метрики контейнеров (CPU/RAM/сеть) для prometheus
+  # =============================================================================
+  cadvisor:
+    # v0.55.1 — новейший тег, реально присутствующий в gcr.io (образы в
+    # registry отстают от GitHub-релизов; проверено через /v2/tags/list).
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    container_name: cadvisor
+    profiles:
+      - monitoring
+    # Доступ к docker daemon и cgroup'ам хоста — единственный способ увидеть
+    # ресурсное потребление всех контейнеров (parser, nlp_processor, postgres, core).
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    # Читать метрики только своих контейнеров (docker), не всего etcd/crio.
+    devices:
+      - /dev/kmsg
+    command:
+      - --housekeeping_interval=15s
+      - --docker_only=true
+      - --disable_metrics=percpu,sched,tcp,udp,advtcp,referenced_memory,cpu_topology
+    networks:
+      - monitoring
+    expose:
+      - "8080"
+    # privileged-доступов не даём: read-only монтирования + cap_drop ALL.
+    # cAdvisor в контейнере работает с этим набором на stock docker host.
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    restart: unless-stopped
+    logging: *default-logging
+
+  # =============================================================================
   # postgres_exporter - PostgreSQL metrics collector
   # =============================================================================
   postgres_exporter:
-    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
     container_name: postgres_exporter
     profiles:
       - monitoring
     environment:
-      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-postgres}?sslmode=disable"
-      PG_EXPORTER_DB_QUERIES_CONFIG_PATH: /etc/postgres_exporter/custom-queries.yml
-    volumes:
-      - ./postgres/monitoring/postgres_exporter.yml:/etc/postgres_exporter/custom-queries.yml:ro
+      # Пароль в отдельной переменной, не в URI: не светится в pg_stat_activity
+      # и в docker inspect. Начиная с v0.18 custom-queries config удалён —
+      # встроенные collectors (stat_database, locks, stat_user_tables, wal,
+      # bgwriter, progress_vacuum, pg_settings) покрывают базовый мониторинг.
+      DATA_SOURCE_URI: "postgres:5432/${POSTGRES_DB:-postgres}?sslmode=disable"
+      DATA_SOURCE_USER: ${POSTGRES_USER:-postgres}
+      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     networks:
       - db
+      - monitoring
     expose:
       - "9187"
     depends_on:
@@ -338,7 +390,7 @@ services:
   # Prometheus - metrics storage and scraping
   # =============================================================================
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.9.1
     container_name: prometheus
     profiles:
       - monitoring
@@ -350,12 +402,17 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=7d
     networks:
+      - monitoring
       - backend
-      - db
     expose:
       - "9090"
+    # UI (http://localhost:9090) только на loopback хоста: наружу 9090 не
+    # публикуем. Доступ с рабочей машины — ssh -L 9090:localhost:9090 <host>.
+    ports:
+      - "127.0.0.1:9090:9090"
     depends_on:
       - postgres_exporter
+      - cadvisor
     deploy:
       resources:
         limits:
@@ -371,7 +428,7 @@ services:
   # Grafana - metrics visualization
   # =============================================================================
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:12.3.1
     container_name: grafana
     profiles:
       - monitoring
@@ -381,10 +438,17 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./postgres/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      # JSON-дашборды для file-provisioner (provider.yml → /var/lib/grafana/dashboards)
+      - ./postgres/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     networks:
-      - backend
+      - monitoring
     expose:
       - "3000"
+    # UI только на loopback хоста (как и prometheus 9090): пароль admin из .env
+    # не должен уезжать в интернет вместе с ngrok-туннелем.
+    # Доступ с рабочей машины — ssh -L 3000:localhost:3000 <host>.
+    ports:
+      - "127.0.0.1:3000:3000"
     depends_on:
       - prometheus
     deploy:
@@ -402,7 +466,7 @@ services:
   # Loki - log aggregation
   # =============================================================================
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.4.2
     container_name: loki
     profiles:
       - monitoring
@@ -411,7 +475,7 @@ services:
       - loki_data:/loki
     command: -config.file=/etc/loki/local-config.yaml
     networks:
-      - backend
+      - monitoring
     expose:
       - "3100"
     deploy:
@@ -429,7 +493,7 @@ services:
   # Promtail - Docker log collector
   # =============================================================================
   promtail:
-    image: grafana/promtail:latest
+    image: grafana/promtail:3.4.2
     container_name: promtail
     profiles:
       - monitoring
@@ -439,7 +503,7 @@ services:
       - ./postgres/monitoring/promtail.yml:/etc/promtail/config.yml:ro
     command: -config.file=/etc/promtail/config.yml
     networks:
-      - backend
+      - monitoring
     depends_on:
       - loki
     deploy:
@@ -463,6 +527,10 @@ networks:
   db:
     driver: bridge
     internal: true  # No external access
+  # Изолированная сеть monitoring-стека: prometheus/grafana/cadvisor/loki.
+  # Отдельная от app-сети — уменьшает поверхность атаки телеметрии.
+  monitoring:
+    driver: bridge
 
 # =============================================================================
 # Volumes

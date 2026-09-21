@@ -1,0 +1,69 @@
+# Prometheus — сбор метрик со всего стека Survival Map.
+#
+# Сетевая логика:
+#   - app-метрики (core, parser, nlp_processor) — скрейп из backend-сети,
+#     напрямую (core:8080/metrics НЕ через nginx: там 404 по дизайну, M-5);
+#   - postgres (pg_* метрики) — через postgres_exporter (сеть db → monitoring);
+#   - контейнеры (CPU/RAM/сеть) — через cAdvisor (сеть monitoring);
+#   - самодiagnostics prometheus — process_* / prometheus_* метрики.
+#
+# Безопасность: prometheus живёт в изолированной сети monitoring; порт 9090
+# наружу не публикуется (только 127.0.0.1 на хосте, см. docker-compose.yml).
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # ------------------------------------------------------------------
+  # Core — API сервер (aiohttp): http_*, ws_*, process_*, python_info
+  # ------------------------------------------------------------------
+  - job_name: core
+    static_configs:
+      - targets: ["core:8080"]
+        labels:
+          service: core
+
+  # ------------------------------------------------------------------
+  # Parser — Telegram клиент: parser_messages_*, parser_queue_size, ...
+  # ------------------------------------------------------------------
+  - job_name: parser
+    static_configs:
+      - targets: ["parser:9100"]
+        labels:
+          service: parser
+
+  # ------------------------------------------------------------------
+  # NLP Processor: processor_messages_*, processor_worker_active, ...
+  # ------------------------------------------------------------------
+  - job_name: nlp_processor
+    static_configs:
+      - targets: ["nlp_processor:8765"]
+        labels:
+          service: nlp_processor
+
+  # ------------------------------------------------------------------
+  # PostgreSQL — через postgres_exporter (pg_* метрики)
+  # ------------------------------------------------------------------
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres_exporter:9187"]
+        labels:
+          service: postgres
+
+  # ------------------------------------------------------------------
+  # Контейнеры (CPU/RAM/сеть per-container) — через cAdvisor
+  # ------------------------------------------------------------------
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          service: cadvisor
+
+  # ------------------------------------------------------------------
+  # Сам Prometheus (self-monitoring: process_*, prometheus_tsdb_*)
+  # ------------------------------------------------------------------
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

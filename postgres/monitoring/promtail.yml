@@ -1,0 +1,36 @@
+# Promtail — сбор docker-логов всех контейнеров в Loki.
+# Доступ к docker.sock — read-only (монтируется в compose). Сервисные метки
+# берём из compose-лейблов: service = com.docker.compose.service
+# (parser, nlp_processor, postgres, core, web, prometheus, ...).
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # container: имя контейнера без ведущего слэша (/parser → parser)
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: container
+      # service: имя сервиса из compose-лейбла
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: service
+      # compose_project: имя проекта (survival-map и т.п.)
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        target_label: compose_project
+      # stream: stdout/stderr
+      - source_labels: ["__meta_docker_container_log_stream"]
+        target_label: stream
+    # pipeline_stages не нужен: docker_sd_configs отдаёт уже развёрнутые строки
+    # (json-обёртку docker json-file промtail разворачивает сам через Docker API).
+    # Для json-парсинга полей из логов добавляйте stages здесь осознанно.

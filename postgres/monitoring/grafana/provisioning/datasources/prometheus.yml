@@ -1,0 +1,18 @@
+# Grafana — автопровижининг datasource Prometheus.
+# Референсим сервис по имени docker-сети (monitoring): grafana и prometheus
+# оба подключены к сети monitoring (см. docker-compose.yml).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      # Тайм-аут запросов к прометею (дашборды с 30d range могут быть тяжёлыми)
+      timeInterval: 15s
+      manageAlerts: false

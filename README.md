@@ -191,6 +191,45 @@ docker compose down        # все сервисы завершаются кор
 docker compose down -v     # + удалить тома (БД, медиа)
 ```
 
+### Мониторинг: Prometheus + Grafana (профиль monitoring)
+
+Метрики собираются со всех ключевых сервисов и отображаются в Grafana:
+
+| Job | Цель | Что видно |
+|---|---|---|
+| `core` | `core:8080/metrics` | HTTP rate/latency (http_*), WebSocket (ws_*), процесс |
+| `parser` | `parser:9100/metrics` | messages_*, очередь (0..65), backpressure |
+| `nlp_processor` | `nlp_processor:8765/metrics` | messages_*, воркеры, circuit breaker |
+| `postgres` | `postgres_exporter:9187` | pg_stat_database, locks, WAL, vacuum |
+| `cadvisor` | `cadvisor:8080` | CPU/RAM/сеть/disk каждого контейнера |
+
+Запуск:
+
+```bash
+docker compose --profile monitoring up -d
+# Grafana:   http://localhost:3000  (admin / GRAFANA_ADMIN_PASSWORD из .env)
+# Prometheus: http://localhost:9090
+```
+
+Порты 3000/9090 публикуются только на `127.0.0.1` — наружу телеметрия не
+торчит (доступ с другой машины: `ssh -L 3000:localhost:3000 -L 9090:localhost:9090 <host>`).
+Пароль Grafana задавайте через `GRAFANA_ADMIN_PASSWORD` в `.env` (дефолт `admin`).
+
+Автоматически провижинятся datasource (Prometheus, Loki) и три дашборда
+(папка "Survival Map"): **Overview** — health сервисов, конвейер
+parser→processor, HTTP core, TPS/кэш PostgreSQL; **Containers** — CPU/RAM/сеть/disk
+по контейнерам (cAdvisor); **Logs** — объём логов, ошибки, живой поток (Loki:
+лейбл `service` — имя compose-сервиса, ошибки фильтруются по `detected_level`).
+Логи контейнеров собирает promtail через docker.sock.
+
+Ключевые метрики конвейера: `parser_queue_size` (рост к 60/65 = backpressure),
+`processor_messages_errors_total` (перманентные ошибки NLP),
+`processor_circuit_breaker_state > 0` (деградация БД),
+`rate(processor_messages_processed_total[5m])` (события/сек).
+
+Приложение-метрики экспортируются сервисами напрямую (без авторизации —
+порты доступны только внутри docker-сети: expose, не ports).
+
 ## Структура репозитория
 
 ```

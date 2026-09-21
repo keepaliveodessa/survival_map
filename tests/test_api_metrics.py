@@ -101,11 +101,19 @@ class TestMetricsRouting:
         assert '/metrics' in paths
 
     @pytest.mark.asyncio
-    async def test_validation_on_requires_token(self):
-        """TELEGRAM_WEBVIEW_VALIDATION=true → /metrics закрыт без токена (401)."""
+    async def test_validation_on_metrics_open_for_scrape(self):
+        """TELEGRAM_WEBVIEW_VALIDATION=true → /metrics открыт без токена (200).
+
+        /metrics добавлен в PUBLIC_ENDPOINTS для скрейпа prometheus'ом из
+        docker-сети (аудит v2, примечание к M-5). Публичной экспозиции нет:
+        nginx отдаёт 404 на /metrics (location = /metrics), порт 8080 —
+        только expose в docker-сети, не ports.
+        """
         client, resp = await _client_request('GET', '/metrics', validation_enabled=True)
         try:
-            assert resp.status == 401
+            assert resp.status == 200
+            body = await resp.text()
+            assert 'python_info' in body
         finally:
             await client.close()
 

@@ -22,7 +22,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     find /root/.local -type f -name "*.md" -delete
 
 ENV PATH="/root/.local/bin:$PATH"
-RUN python -c "from rapidfuzz import fuzz; from mawo_pymorphy3 import MorphAnalyzer; import snowballstemmer; import aiohttp; import asyncpg; print('deps OK')"
+RUN python -c "from rapidfuzz import fuzz; from mawo_pymorphy3 import MorphAnalyzer; import snowballstemmer; import aiohttp; import asyncpg; print('deps OK')" && \
+    python -c "import prometheus_client; print('✅ prometheus_client OK')"
 
 # =============================================================================
 # Stage 2: Runtime (минимальный образ)

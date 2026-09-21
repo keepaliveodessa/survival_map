@@ -1,0 +1,100 @@
+{
+  "uid": "survival-containers",
+  "title": "Survival Map — Containers",
+  "tags": ["survival-map", "cadvisor"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "container",
+        "label": "Контейнер",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(container_cpu_usage_seconds_total{image!=\"\"}, name)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "CPU по контейнерам",
+      "description": "rate(container_cpu_usage_seconds_total[5m]) — потребление CPU ядрами",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "targets": [{
+        "refId": "A",
+        "expr": "rate(container_cpu_usage_seconds_total{name=~\"$container\"}[5m])",
+        "legendFormat": "{{name}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Memory used по контейнерам",
+      "description": "container_memory_usage_bytes - inactive_file (рабочая память). Fallback-ветка 'or' покрывает cgroup v1 без inactive_file",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "targets": [{
+        "refId": "A",
+        "expr": "container_memory_usage_bytes{name=~\"$container\"} - container_memory_inactive_file_bytes{name=~\"$container\"} or container_memory_usage_bytes{name=~\"$container\"}",
+        "legendFormat": "{{name}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Network RX/TX по контейнерам",
+      "description": "Скорость приёма/передачи контейнерных сетевых интерфейсов",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "targets": [
+        { "refId": "A", "expr": "rate(container_network_receive_bytes_total{name=~\"$container\"}[5m])", "legendFormat": "RX {{name}}" },
+        { "refId": "B", "expr": "rate(container_network_transmit_bytes_total{name=~\"$container\"}[5m])", "legendFormat": "TX {{name}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Disk IO по контейнерам",
+      "description": "Чтение/запись блочных устройств контейнера",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "targets": [
+        { "refId": "A", "expr": "rate(container_fs_reads_bytes_total{name=~\"$container\"}[5m])", "legendFormat": "read {{name}}" },
+        { "refId": "B", "expr": "rate(container_fs_writes_bytes_total{name=~\"$container\"}[5m])", "legendFormat": "write {{name}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Memory limit (из compose deploy.resources)",
+      "description": "container_spec_memory_limit_bytes — фактические лимиты контейнеров",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 18 },
+      "targets": [{
+        "refId": "A",
+        "expr": "container_spec_memory_limit_bytes{name=~\"$container\"}",
+        "legendFormat": "{{name}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    }
+  ]
+}

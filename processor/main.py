@@ -26,6 +26,13 @@ setup_logging(
 )
 
 from common.db_adapter import DBAdapter
+from common.metrics import (
+    processor_messages_processed_total,
+    processor_messages_errors_total,
+    processor_messages_expired_total,
+    processor_worker_active,
+    processor_circuit_breaker_state,
+)
 from .morphology import Morphology
 from .phonetic_index import PhoneticIndex
 from .geo_matcher import GeoMatcher
@@ -44,6 +51,14 @@ _MAX_WORKER_CONCURRENCY = 8
 _STALE_PROCESSING_INTERVAL = timedelta(minutes=5)
 # Периодичность прогона очистителя зависших задач.
 _CLEANER_INTERVAL = 60.0
+
+# Маппинг CircuitState → числовое значение гейджа processor_circuit_breaker_state
+# (0=closed 1=half_open 2=open): ненулевое значение удобно алертить как деградацию БД.
+_CIRCUIT_STATE_PROM = {
+    CircuitState.CLOSED: 0,
+    CircuitState.HALF_OPEN: 1,
+    CircuitState.OPEN: 2,
+}
 
 
 # Общий хвост обоих INSERT-запросов: инкремент events_meta и pg_notify.
@@ -151,6 +166,8 @@ class ProcessorBot:
 
         # Circuit breaker для защиты БД
         self._circuit_breaker = CircuitBreaker(failure_threshold=5, timeout=60.0)
+        # Prometheus: стартовое состояние защитной сетки (0 = closed).
+        processor_circuit_breaker_state.set(0)
 
     async def initialize(self) -> bool:
         """Инициализация всех компонентов: БД, NLP, подписки PG notify."""
@@ -304,6 +321,10 @@ class ProcessorBot:
                 self.health_server._memory_warning_sent = False
             # R-PR2: не даём _worker_tasks расти при рестартах воркеров.
             self._worker_tasks = [t for t in self._worker_tasks if not t.done()]
+            processor_worker_active.set(len(self._worker_tasks))
+            processor_circuit_breaker_state.set(
+                _CIRCUIT_STATE_PROM[self._circuit_breaker.state]
+            )
             self._write_heartbeat(self)
             await asyncio.sleep(1)
 
@@ -361,6 +382,7 @@ class ProcessorBot:
                 # Защитная сетка: неучтённая ошибка → задача снова доступна
                 # для других воркеров сразу, не дожидаясь очистителя.
                 self._errors += 1
+                processor_messages_errors_total.inc()
                 logger.error(
                     f"Worker {worker_id}: message {row['message_id']} "
                     f"crashed with unhandled error: {e} — requeueing"
@@ -385,6 +407,7 @@ class ProcessorBot:
             if result:
                 await self._mark_done(row['id'])
                 self._messages_processed += 1
+                processor_messages_processed_total.inc()
                 logger.info(
                     f"✅ Message {msg_id} processed: "
                     f"event_id={result['event_id']}, layer={result['layer']}, "
@@ -404,6 +427,7 @@ class ProcessorBot:
             )
         except Exception as e:
             self._errors += 1
+            processor_messages_errors_total.inc()
             await self._mark_error(row['id'], str(e))
             logger.error(f"Message {msg_id}: failed permanently: {e}")
 
@@ -530,6 +554,7 @@ class ProcessorBot:
             logger.warning("msg %s: event_time %s outside 60-min window — mark expired", message_id, event_time)
             await self._mark_expired(row['id'])
             self._expired += 1
+            processor_messages_expired_total.inc()
             return None
 
         tokens = tokenize(raw_text)
