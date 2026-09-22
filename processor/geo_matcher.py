@@ -47,15 +47,19 @@ def _fuzzy_match(query: str, phrases: list, threshold: float):
         return None
 
 
-def _batch_fuzzy_match(queries: list, phrases: list, threshold: float):
+def _batch_fuzzy_match(queries: list, phrases: list, threshold: float,
+                       max_queries: int = 20):
     """Batch fuzzy matching: один IPC на всё сообщение.
 
     rapidfuzz.process.extract(queries=list, ...) в 3.9.x молча возвращает
     пустой список (баг версии), поэтому каждый запрос матчим отдельным
     extractOne — иначе Tier 2 мёртв на проде (ProcessPoolExecutor).
+
+    max_queries: лимит кандидатов для Tier 2 — длинные сообщения с 50+
+    токенами создают O(n*m) взрыв, блокируя процессор на минуты.
     """
     results = {}
-    for q in queries:
+    for q in queries[:max_queries]:
         try:
             match = rf_process.extractOne(
                 q, phrases, scorer=fuzz.WRatio, score_cutoff=threshold,
@@ -96,11 +100,18 @@ _LOC_PREPS: frozenset = frozenset({
     'около', 'возле', 'вдоль',
 })
 
-# Шумовые служебные токены («ст.», «ул.», «г.» + суффиксы порядковых),
-# пропускаемые слайдинг-окном: «11 ст. Фонтана» → ключ (11, фонтана),
-# совпадающий с именем «11 Фонтана» из справочника.
+# Шумовые служебные токены («ст.», «ул.», «г.» + суффиксы порядковых +
+# описательные прилагательные между числом и названием).
+# Пропускаемые слайдинг-окном: «11 ст. Фонтана» → ключ (11, фонтана),
+# «5 ст большого Фонтана» → ключ (5, фонтана) — «большого» вырезается.
 _NOISE_TOKENS: frozenset = frozenset({
     'ст', 'ул', 'вул', 'пр', 'пер', 'ш', 'им', 'г', 'го', 'й', 'ій', 'йй',
+    # Описательные прилагательные ( padежные формы):
+    # «5 ст большого Фонтана» → «5 Фонтана», «первая старого Фонтана» → «первая Фонтана»
+    'большого', 'малого', 'старого', 'нового',
+    'большая', 'малая', 'старая', 'новая',
+    'большой', 'малый', 'старый', 'новый',
+    'первого', 'второго', 'третьего',
 })
 
 # Типы в порядке приоритета: settlement выше street
@@ -565,10 +576,9 @@ class GeoMatcher:
             if result:
                 result['_anchored'] = is_anchored
                 result['_segment'] = seg
-                # Стем-матч — падежная нормализация: floor компенсирует fuzz-
-                # штраф поверх surface-варианта (французского→Французский).
-                floor = 1.0 - 0.02 * (max_w - min(_size, max_w))
-                result['score'] = max(result['score'], floor)
+                # BUG FIX: Removed score floor — it artificially inflated stem-match
+                # scores, preventing proper calibration. The fuzz.ratio score already
+                # reflects surface similarity; flooring it masked poor matches.
                 gid = result['geo_id']
                 existing = best_by_geo.get(gid)
                 if existing is None or result['score'] > existing['score']:
@@ -585,7 +595,19 @@ class GeoMatcher:
 
         if tier2_queries:
             typo_thresh = _typo_threshold_percent()
-            tier2_queries = list(dict.fromkeys(tier2_queries))
+            # BUG FIX: Deduplicate tier2_queries AND tier2_meta together.
+            # Previously only tier2_queries was deduplicated, causing index
+            # misalignment — meta[i] referred to wrong surface/span.
+            seen_surfaces: Set[str] = set()
+            deduped_queries: List[str] = []
+            deduped_meta: List[dict] = []
+            for q, m in zip(tier2_queries, tier2_meta):
+                if q not in seen_surfaces:
+                    seen_surfaces.add(q)
+                    deduped_queries.append(q)
+                    deduped_meta.append(m)
+            tier2_queries = deduped_queries
+            tier2_meta = deduped_meta
 
             if self._executor:
                 loop = asyncio.get_running_loop()
@@ -596,19 +618,18 @@ class GeoMatcher:
                             _batch_fuzzy_match,
                             tier2_queries,
                             s_phrases,
-                            typo_thresh
+                            typo_thresh,
                         ),
                         timeout=10.0,
                     )
                 except (asyncio.TimeoutError, Exception) as e:
-                    logger.warning(f"[Geo] Batch fuzzy match timeout/failed: {e}, falling back to sync")
-                    batch_results = _batch_fuzzy_match(tier2_queries, s_phrases, typo_thresh)
+                    logger.warning(f"[Geo] Batch fuzzy match timeout/failed: {e}, skipping tier2")
+                    batch_results = {}
             else:
                 # Без пула потоков (тесты, деградация, сбой инициализации
-                # executor) — синхронный Tier 2. Иначе typo-кандидаты молча
-                # отбрасывались: batch-блок был целиком завязан на executor.
+                # executor) — синхронный Tier 2 с лимитом.
                 batch_results = {}
-                for surface in tier2_queries:
+                for surface in tier2_queries[:10]:
                     m = _fuzzy_match(surface, s_phrases, typo_thresh)
                     if m:
                         batch_results[surface] = m
@@ -634,11 +655,14 @@ class GeoMatcher:
                         if existing is None or result['score'] > existing['score']:
                             best_by_geo[gid] = result
 
-        # Prepositional boost: не выталкивает кандидатов серой зоны (0.70–0.85)
-        # за порог confident (0.85). Сортировка и скоринг используют boosted score.
+        # Prepositional boost: applies only when score < 0.85 (grey zone).
+        # BUG FIX: Previously boost applied to ALL anchored candidates,
+        # including those already >= 0.85, inflating high-confidence matches.
+        # Now boost only helps borderline candidates, capped at 0.85.
         for r in best_by_geo.values():
             if r.pop('_anchored', False):
-                r['score'] = min(1.0, r['score'] + boost)
+                if r['score'] < 0.85:
+                    r['score'] = min(0.85, r['score'] + boost)
 
         if geo_match_tier_total is not None:
             geo_match_tier_total.labels(self._classify_geo_tier(best_by_geo)).inc()

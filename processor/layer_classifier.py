@@ -14,10 +14,15 @@
 Приоритет при совпадении ключей из разных слоёв: bus → cops → traffic → pig.
 Теги '#' на классификацию не влияют — '#' удаляется в preprocess_light, слой
 определяется только по тексту (леммам), а не по тому, что автор пометил тегом.
+
+HARD RULES (переопределяют standard priority):
+  - «блокпост» / «бп» → traffic (situational keyword, НЕ cops)
+  - Template messages (📍📌 + Адрес:) → pig (structured info, не situational)
 """
 
 import logging
-from typing import Dict, List, Set
+import re
+from typing import Dict, List, Optional, Set
 
 from .morphology import Lemma, Morphology
 
@@ -34,6 +39,9 @@ except Exception:
     layer_classification_fallback_total = None
 
 logger = logging.getLogger(__name__)
+
+# Template message pattern: 📍 or 🏠 + Адрес: — structured info messages
+_TEMPLATE_RE = re.compile(r'(📍|📌|🏠.*Адрес:)', re.IGNORECASE)
 
 
 def _get_layer_keywords(layer: str) -> tuple:
@@ -67,20 +75,37 @@ class LayerClassifier:
             return ''
         return self._morph.lemmatize_word(word).normal_form
 
-    def classify(self, lemmas: List[Lemma]) -> str:
+    def classify(self, lemmas: List[Lemma], raw_text: str = None) -> str:
         """Слой по приоритету bus → cops → traffic, иначе 'pig'.
 
         Принимает уже лемматизированные токены (от Morphology.lemmatize_tokens).
-        Слой определяется только по совпадению лемм с ключевыми словами слоёв.
+        Слой определяется по совпадению лемм с ключевыми словами слоёв,
+        с учётом hard rules для блокпостов и шаблонных сообщений.
+
+        raw_text — исходный текст (для детекции шаблонов). Если не задан,
+        шаблонный детектор не вызывается.
         """
         result = 'pig'
         if lemmas:
             token_lemmas: Set[str] = {l.normal_form for l in lemmas if l.normal_form}
 
-            for layer in _LAYER_PRIORITY:
-                if self._keyword_lemmas[layer] & token_lemmas:
-                    result = layer
-                    break
+            # HARD RULE 1: «блокпост» / «бп» → traffic
+            # Блокпост — situational keyword, ВСЕГДА traffic, даже если
+            # в тексте есть «менты»/«мусора» (cops). Слово «блокпост»
+            # не является гео-названием — это situation descriptor.
+            if 'блокпост' in token_lemmas or 'бп' in token_lemmas:
+                result = 'traffic'
+            # HARD RULE 2: Template messages (📍📌 + Адрес:) → pig
+            # Шаблонные сообщения — structured info, не situational.
+            # Даже если описание содержит «менты/мусора», слой = pig.
+            elif raw_text and _TEMPLATE_RE.search(raw_text):
+                result = 'pig'
+            # Standard priority: bus → cops → traffic
+            else:
+                for layer in _LAYER_PRIORITY:
+                    if self._keyword_lemmas[layer] & token_lemmas:
+                        result = layer
+                        break
 
         if layer_classification_fallback_total is not None:
             layer_classification_fallback_total.labels(result).inc()

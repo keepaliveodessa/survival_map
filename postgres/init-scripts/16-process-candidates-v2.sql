@@ -146,12 +146,48 @@ BEGIN
         UNION
         SELECT bc.id AS root_id, e.id_a AS member_id FROM best_candidate bc JOIN graph_edges e ON e.id_b = bc.id
     ),
+    -- Connected component via iterative BFS (safe, no recursive CTE overhead).
+    -- Uses 3 levels of UNION to discover neighbors at distance 1, 2, 3 from
+    -- best_candidate. Covers chains of intersecting streets without risk of
+    -- infinite recursion or CTE blowup on dense graphs.
     main_component AS (
         SELECT root_id, member_id AS id FROM main_component_neighbors
         UNION
-        SELECT mcn.root_id, e.id_b AS id FROM main_component_neighbors mcn JOIN graph_edges e ON e.id_a = mcn.member_id WHERE e.id_b != mcn.root_id
+        SELECT mcn.root_id, e.id_b AS id FROM main_component_neighbors mcn
+            JOIN graph_edges e ON e.id_a = mcn.member_id
+            WHERE e.id_b != mcn.root_id
         UNION
-        SELECT mcn.root_id, e.id_a AS id FROM main_component_neighbors mcn JOIN graph_edges e ON e.id_b = mcn.member_id WHERE e.id_a != mcn.root_id
+        SELECT mcn.root_id, e.id_a AS id FROM main_component_neighbors mcn
+            JOIN graph_edges e ON e.id_b = mcn.member_id
+            WHERE e.id_a != mcn.root_id
+        UNION
+        SELECT mc2.root_id, e.id_b AS id FROM (
+            SELECT mcn.root_id, e2.id_b AS member_id
+            FROM main_component_neighbors mcn
+            JOIN graph_edges e2 ON e2.id_a = mcn.member_id
+            WHERE e2.id_b != mcn.root_id
+            UNION
+            SELECT mcn.root_id, e2.id_a AS id
+            FROM main_component_neighbors mcn
+            JOIN graph_edges e2 ON e2.id_b = mcn.member_id
+            WHERE e2.id_a != mcn.root_id
+        ) mc2
+        JOIN graph_edges e ON e.id_a = mc2.member_id
+        WHERE e.id_b != mc2.root_id
+        UNION
+        SELECT mc2.root_id, e.id_a AS id FROM (
+            SELECT mcn.root_id, e2.id_b AS member_id
+            FROM main_component_neighbors mcn
+            JOIN graph_edges e2 ON e2.id_a = mcn.member_id
+            WHERE e2.id_b != mcn.root_id
+            UNION
+            SELECT mcn.root_id, e2.id_a AS id
+            FROM main_component_neighbors mcn
+            JOIN graph_edges e2 ON e2.id_b = mcn.member_id
+            WHERE e2.id_a != mcn.root_id
+        ) mc2
+        JOIN graph_edges e ON e.id_b = mc2.member_id
+        WHERE e.id_a != mc2.root_id
     ),
     mc_all AS (SELECT mc.id FROM main_component mc UNION SELECT bc.id FROM best_candidate bc),
     mc_candidates AS (SELECT c.* FROM candidates c WHERE c.id IN (SELECT id FROM mc_all)),

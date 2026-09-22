@@ -559,7 +559,7 @@ class ProcessorBot:
 
         tokens = tokenize(raw_text)
         lemmas = self.morph.lemmatize_tokens(tokens)
-        layer = self.layer_classifier.classify(lemmas)
+        layer = self.layer_classifier.classify(lemmas, raw_text=raw_text)
 
         promotional = is_promotional(raw_text)
         if promotional or not raw_text:
@@ -569,19 +569,30 @@ class ProcessorBot:
                 # Сохраняем оригинальный текст промо-сообщения,
                 # обрезая до допустимой длины для отображения.
                 description = truncate_for_geo(raw_text, settings.parser.max_text_length)
-            return self._enrich(
-                await self._insert_event(
-                    message_id=message_id, event_time=event_time,
-                    description=description, photo_path=None,
-                    layer=layer, strategy='random',
-                    geom_wkt=self._random_point(),
-                ),
-                tokens=tokens, geo_ids=[],
+            result = await self._insert_event(
+                message_id=message_id, event_time=event_time,
+                description=description, photo_path=None,
+                layer=layer, strategy='random',
+                geom_wkt=self._random_point(),
             )
+            self._log_quality_metrics(
+                layer=layer, strategy='random', confidence=0.0,
+                geo_ids=[], geo_scores=[], geo_texts=[],
+                source='promotional',
+            )
+            return self._enrich(result, tokens=tokens, geo_ids=[])
 
-        entities = await self.matcher.find_geo(
-            tokens=tokens, lemmas=lemmas, text=raw_text,
-        )
+        try:
+            entities = await asyncio.wait_for(
+                self.matcher.find_geo(tokens=tokens, lemmas=lemmas, text=raw_text),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"[NLP] find_geo timeout for message {message_id}")
+            entities = []
+        except Exception as e:
+            logger.warning(f"[NLP] find_geo error for message {message_id}: {e}")
+            entities = []
 
         geo_ids = []
         geo_scores = []
@@ -598,15 +609,18 @@ class ProcessorBot:
         geo_texts = geo_texts[:5]
 
         if not geo_ids:
-            return self._enrich(
-                await self._insert_event(
-                    message_id=message_id, event_time=event_time,
-                    description=raw_text, photo_path=None,
-                    layer=layer, strategy='random',
-                    geom_wkt=self._random_point(),
-                ),
-                tokens=tokens, geo_ids=geo_ids,
+            result = await self._insert_event(
+                message_id=message_id, event_time=event_time,
+                description=raw_text, photo_path=None,
+                layer=layer, strategy='random',
+                geom_wkt=self._random_point(),
             )
+            self._log_quality_metrics(
+                layer=layer, strategy='random', confidence=0.0,
+                geo_ids=[], geo_scores=[], geo_texts=[],
+                source='no_geo',
+            )
+            return self._enrich(result, tokens=tokens, geo_ids=geo_ids)
 
         result = self._enrich(
             await self._insert_event_from_candidates(
@@ -617,6 +631,14 @@ class ProcessorBot:
             ),
             tokens=tokens, geo_ids=geo_ids,
         )
+        if result:
+            self._log_quality_metrics(
+                layer=layer,
+                strategy=result.get('strategy', 'unknown'),
+                confidence=result.get('confidence', 0.0),
+                geo_ids=geo_ids, geo_scores=geo_scores, geo_texts=geo_texts,
+                source='geo_match',
+            )
         return result
 
     @staticmethod
@@ -627,6 +649,34 @@ class ProcessorBot:
             result['geo_matched'] = len(geo_ids)
             result['geo_ids'] = geo_ids
         return result
+
+    @staticmethod
+    def _log_quality_metrics(
+        layer: str,
+        strategy: str,
+        confidence: float,
+        geo_ids: list,
+        geo_scores: list,
+        geo_texts: list,
+        source: str,
+    ):
+        """Логирование метрик качества для калибровки NLP-пайплайна.
+
+        Записывает в structured log:
+          - layer: итоговый слой (bus/cops/traffic/pig)
+          - strategy: стратегия геолокации (single_match/intersection/...)
+          - confidence: score финального кандидата
+          - geo_candidates: количество кандидатов
+          - geo_top_scores: топ-3 скоров для анализа распределения
+          - source: источник решения (geo_match/no_geo/promotional)
+        """
+        top_scores = geo_scores[:3] if geo_scores else []
+        logger.info(
+            "[quality] layer=%s strategy=%s confidence=%.3f "
+            "geo_candidates=%d top_scores=%s source=%s",
+            layer, strategy, confidence,
+            len(geo_ids), top_scores, source,
+        )
 
     async def _insert_event(self, *, message_id, event_time, description,
                              photo_path, layer, strategy, geom_wkt):
