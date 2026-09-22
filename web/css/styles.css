@@ -339,6 +339,10 @@ body.dark-theme {
     text-align: center;
 }
 
+/* Прозрачность иконок по возрасту события */
+.icon-opacity-65 { opacity: 0.65; }
+.icon-opacity-30 { opacity: 0.3; }
+
 .layers input[type="checkbox"] {
     margin: 0;
     /* Можно стилизовать чекбоксы под тему, но это сложнее */

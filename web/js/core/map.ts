@@ -21,10 +21,12 @@ window.preloadIcons = function(urls: string[]): void {
     }
 };
 
-window.createIcon = function(layer: string): L.Icon | L.DivIcon {
+window.createIcon = function(layer: string, properties?: Record<string, unknown>): L.Icon | L.DivIcon {
+    const opacity = getIconOpacity(properties);
+    const opacityClass = opacity < 1 ? ` icon-opacity-${Math.round(opacity * 100)}` : '';
     if (layer === 'traffic') {
         return L.divIcon({
-            html: '<span style="font-size:22px;line-height:25px;">⛔</span>',
+            html: `<span style="font-size:22px;line-height:25px;opacity:${opacity}">⛔</span>`,
             className: 'traffic-emoji-icon',
             iconSize: [25, 25],
             iconAnchor: [12.5, 12.5],
@@ -36,19 +38,20 @@ window.createIcon = function(layer: string): L.Icon | L.DivIcon {
         iconUrl: config.url,
         iconSize: config.size,
         iconAnchor: [12.5, 12.5],
-        popupAnchor: [0, -20]
+        popupAnchor: [0, -20],
+        className: opacityClass
     });
 };
 
 window.createMarker = function(_map: L.Map, latLng: L.LatLng, properties: Record<string, unknown>): L.Marker {
-    const marker = L.marker(latLng, { icon: window.createIcon(properties.layer as string) });
+    const marker = L.marker(latLng, { icon: window.createIcon(properties.layer as string, properties) });
     marker.bindPopup(window.createPopupContent(properties));
     return marker;
 };
 
-function getGeometryColors(properties: Record<string, unknown>): { color: string; fillColor: string } {
+function parseEventAgeMs(properties: Record<string, unknown>): number | null {
     const raw = properties.time ?? properties.created_at ?? properties.timestamp;
-    if (raw == null) return { color: '#dc3545', fillColor: '#dc3545' };
+    if (raw == null) return null;
     let value: string | number = raw as string | number;
     if (typeof value === 'string') {
         let normalized = value.trim().replace(' ', 'T');
@@ -56,11 +59,25 @@ function getGeometryColors(properties: Record<string, unknown>): { color: string
         value = normalized;
     }
     const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return { color: '#dc3545', fillColor: '#dc3545' };
-    const ageMs = window.serverNow() - d.getTime();
+    if (Number.isNaN(d.getTime())) return null;
+    return window.serverNow() - d.getTime();
+}
+
+function getGeometryColors(properties: Record<string, unknown>): { color: string; fillColor: string } {
+    const ageMs = parseEventAgeMs(properties);
+    if (ageMs == null) return { color: '#dc3545', fillColor: '#dc3545' };
     if (ageMs <= 15 * 60 * 1000) return { color: '#dc3545', fillColor: '#dc3545' };
     if (ageMs <= 30 * 60 * 1000) return { color: '#0d6efd', fillColor: '#0d6efd' };
     return { color: '#ffffff', fillColor: '#ffffff' };
+}
+
+function getIconOpacity(properties?: Record<string, unknown>): number {
+    if (!properties) return 1;
+    const ageMs = parseEventAgeMs(properties);
+    if (ageMs == null) return 1;
+    if (ageMs <= 15 * 60 * 1000) return 1;
+    if (ageMs <= 30 * 60 * 1000) return 0.65;
+    return 0.3;
 }
 
 window.createCircle = function(_map: L.Map, coords: number[], properties: Record<string, unknown>, strategy?: string): L.Layer[] {

@@ -87,7 +87,7 @@ declare global {
 
         // ==================== GEOMETRY HELPERS (js/core/map.ts) ====================
 
-        createIcon: (layer: string) => L.Icon | L.DivIcon;
+        createIcon: (layer: string, properties?: Record<string, unknown>) => L.Icon | L.DivIcon;
         createMarker: (map: L.Map, latLng: L.LatLng, properties: Record<string, unknown>) => L.Marker;
         createCircle: (map: L.Map, coords: number[], properties: Record<string, unknown>, strategy?: string) => L.Layer[];
         getPolylineMidpoint: (latLngs: L.LatLng[]) => L.LatLng | null;

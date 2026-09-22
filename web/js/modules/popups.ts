@@ -173,6 +173,9 @@ function showLegendPopup(): void {
             <p style="margin: 0 0 10px 0; font-size: 14px; line-height: 1.5;">
                 <strong style="color: #999; text-shadow: 0 0 2px rgba(0,0,0,0.3);">● Белый</strong> — до 60 минут
             </p>
+            <p style="margin: 0 0 6px 0; color: var(--tg-hint-color, #888); font-size: 13px; line-height: 1.4;">
+                Прозрачность иконки: &lt;15 мин — 100%, 15–30 мин — 65%, &gt;30 мин — 30%
+            </p>
             <p style="margin: 0; color: var(--tg-hint-color, #888); font-size: 13px; line-height: 1.4;">
                 Круг/контур — точное место; линия — улица
             </p>
