@@ -7,7 +7,7 @@ Telegram Mini App — интерактивная карта событий Од�
 60 минут и удаляет их сам (TTL).
 
 <p align="center">
-  <img src="assets/survival_map.gif" alt="Survival Map — анимация работы карты" width="320"/>
+  <img src="assets/architecture.gif" alt="Схема архитектуры" width="600"/>
 </p>
 
 - **Извлечение улиц** — sliding-window матчер: морфология (`mawo-pymorphy3`) +
@@ -27,10 +27,6 @@ Telegram Mini App — интерактивная карта событий Од�
 | `processor` | NLP-пайплайн: токенизация → лемматизация → классификация → geo → `events` | —              |
 | `core`      | aiohttp: REST + WebSocket, JWT-валидация Telegram, `LISTEN events` | —              |
 | `web`       | reverse-proxy + статика фронтенда (собирается в образе)            | **80**         |
-
-<p align="center">
-  <img src="assets/architecture.gif" alt="Схема архитектуры" width="600"/>
-</p>
 
 Сети изолированы: БД во внутренней сети (`internal: true`), наружу торчит только
 web:80.
