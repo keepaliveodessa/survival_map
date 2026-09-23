@@ -28,15 +28,46 @@ Telegram Mini App — интерактивная карта событий Од�
 | `core`      | aiohttp: REST + WebSocket, JWT-валидация Telegram, `LISTEN events` | —              |
 | `web`       | reverse-proxy + статика фронтенда (собирается в образе)            | **80**         |
 
-Поток данных:
+<p align="center">
+  <img src="assets/architecture.gif" alt="Схема архитектуры" width="600"/>
+</p>
+
+Сети изолированы: БД во внутренней сети (`internal: true`), наружу торчит только
+web:80.
+
+## Поток данных
 
 ```
 Telegram-канал → parser → pending_events (очередь) → processor (NLP/geo)
    → PostgreSQL (PostGIS) → pg_notify → core (LISTEN → WebSocket) → web → карта
 ```
 
-Сети изолированы: БД во внутренней сети (`internal: true`), наружу торчит только
-web:80.
+Каждый сервис занимает своё место в конвейере:
+
+<p align="center">
+  <img src="assets/parser.gif" alt="Parser — Telegram-канал → pending_events" width="600"/>
+  <br/><em>Parser — читает канал и складывает сообщения в очередь</em>
+</p>
+
+<p align="center">
+  <img src="assets/processor.gif" alt="Processor — NLP → гео → events" width="600"/>
+  <br/><em>Processor — NLP-пайплайн: токенизация → лемматизация → классификация → геолокация</em>
+</p>
+
+<p align="center">
+  <img src="assets/postgres.gif" alt="PostgreSQL — PostGIS + pg_notify" width="600"/>
+  <br/><em>PostgreSQL — хранение геометрии (PostGIS) + pg_notify для событий</em>
+</p>
+
+<p align="center">
+  <img src="assets/core_api.gif" alt="Core — REST + WebSocket, JWT" width="600"/>
+  <br/><em>Core — REST + WebSocket, JWT-валидация Telegram</em>
+</p>
+
+<p align="center">
+  <img src="assets/web_mini_app.gif" alt="Web Mini App — карта" width="600"/>
+  <br/><em>Web Mini App — Leaflet-карта с событиями в реальном времени</em>
+</p>
 
 ## Деплой
 
