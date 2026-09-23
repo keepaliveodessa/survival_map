@@ -23,11 +23,31 @@ PUBLIC_ENDPOINTS: Set[str] = {
     '/api/validation-config',  # Needed to determine if validation is enabled
     '/api/validate-init',      # Used to get JWT tokens (has its own validation)
     '/api/auth/refresh',       # Used to refresh JWT tokens
+    '/api/gate-redirect',      # Gate redirect logging (no JWT yet)
     # Prometheus-скрейп из docker-сети (prometheus в backend/monitoring).
     # Снаружи /metrics закрыт nginx (location = /metrics { return 404; }),
     # а порт 8080 только expose в docker-сети — публичной экспозиции нет.
     '/metrics',
 }
+
+# Публичные префиксы URL. Медиа публична по дизайну: nginx отдаёт статику
+# /media/events/* без авторизации (RULES_WEB.md), а fallback на core
+# (nginx @api_fallback, /assets/images/events/*) проксирует сюда БЕЗ
+# Authorization-заголовка — а <img>-теги в браузере его и не отправляют.
+# Поэтому /api/media/* должен вести себя как публичная статика, иначе
+# удалённое фото отдаёт 401 вместо честной 404.
+PUBLIC_PREFIXES: Set[str] = {
+    '/api/media',
+}
+
+def _is_public_path(path: str) -> bool:
+    """Проверка «точного» эндпоинта или публичного префикса (как в body_size_limit)."""
+    if path in PUBLIC_ENDPOINTS:
+        return True
+    for prefix in PUBLIC_PREFIXES:
+        if path == prefix or path.startswith(prefix + '/'):
+            return True
+    return False
 
 
 async def jwt_auth_middleware(app: web.Application, handler):
@@ -50,7 +70,7 @@ async def jwt_auth_middleware(app: web.Application, handler):
         # request.path в aiohttp уже без query-string, но нормализуем trailing
         # slash чтобы и /health, и /health/ покрывались PUBLIC_ENDPOINTS.
         path = request.path.rstrip('/') or '/'
-        if path in PUBLIC_ENDPOINTS:
+        if _is_public_path(path):
             return await handler(request)
 
         # For WebSocket, skip JWT check here (handled in websocket handler).

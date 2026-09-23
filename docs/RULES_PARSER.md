@@ -214,31 +214,61 @@ parser:
 
 ### R-P26: Cleanup stale photos (70 min)
 
-Parser обязан содержать страховку от потери pg_notify: файлы фото старше 70 минут удаляются независимо от БД.
+Parser обязан содержать страховку от потери pg_notify: файлы фото старше 70 минут
+удаляются **только если на них больше не ссылается ни одно событие в `events`**
+(DB-aware). Фото «живого» события при этом НЕ трогается — раньше безусловное
+удаление рвало картинку, пока событие ещё существовало (битый `<img>` + 401 на
+nginx API-fallback).
 
 ```python
 async def _cleanup_stale_photos(self):
-    """Удалять файлы старше 70 минут независимо от БД (страховка от потери pg_notify)."""
+    """Удалять файлы старше 70 минут, на которые больше НЕ ссылается ни одно
+    событие (страховка от потери pg_notify)."""
     cutoff = time.time() - 70 * 60
     media_dir = Path(self.events_media_dir)
-    if not media_dir.exists():
+    if not media_dir.exists() or self.db is None or self.db.pool is None:
         return
 
+    candidates = [
+        f for f in media_dir.iterdir()
+        if f.is_file() and f.stat().st_mtime < cutoff
+    ]
+    if not candidates:
+        return
+
+    try:
+        async with self.db.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT photo_url FROM events WHERE photo_url LIKE $1",
+                "/media/events/%",
+            )
+    except Exception as e:
+        logger.warning(f"stale photo DB check failed, skipping cleanup: {e}")
+        return
+
+    referenced = {row['photo_url'] for row in rows}
+
     deleted = 0
-    for f in media_dir.iterdir():
-        if f.is_file() and f.stat().st_mtime < cutoff:
-            try:
-                f.unlink()
-                deleted += 1
-            except FileNotFoundError:
-                pass   # идемпотентно
-            except Exception as e:
-                logger.warning(f"stale photo delete failed: {f}: {e}")
+    for f in candidates:
+        url = f"/media/events/{f.name}"
+        if url in referenced:
+            continue
+        try:
+            f.unlink()
+            deleted += 1
+        except FileNotFoundError:
+            pass   # идемпотентно
+        except Exception as e:
+            logger.warning(f"stale photo delete failed: {f}: {e}")
     if deleted:
-        logger.info(f"Stale photos cleaned: {deleted}")
+        logger.info(f"Stale photos cleaned (unreferenced): {deleted}")
 ```
 
-**Правило:** Запуск раз в 5 минут в главном цикле. `FileNotFoundError` проглатывается (идемпотентность).
+**Правило:** Запуск раз в 5 минут в главном цикле. `FileNotFoundError` проглатывается
+(идемпотентность). Orphan-файлы (событие удалено, `pg_notify` потерян) удаляются на
+следующей итерации — строки в `events` уже нет, значит фото больше не нужно.
+При недоступности БД проход пропускается целиком (безопаснее НЕ удалять, чем
+удалить живое фото).
 
 ---
 

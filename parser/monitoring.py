@@ -617,24 +617,54 @@ class ParserBot:
             await asyncio.sleep(300)
 
     async def _cleanup_stale_photos(self):
-        """Удалять файлы старше 70 минут независимо от БД (страховка от потери pg_notify)."""
+        """Удалять файлы старше 70 минут, на которые больше НЕ ссылается ни одно
+        событие (страховка от потери pg_notify).
+
+        Раньше файлы старше 70 минут удалялись безусловно — но живое событие
+        (60 минут в БД) могло ещё существовать, а его фото уже нет → битый src
+        и 401 на API-fallback. Теперь удаляются только orphan-файлы: событие
+        удалено из events (clean_old_events / partition_overflow) → строки нет →
+        фото больше не нужно. Ссылающиеся фото живут столько же, сколько
+        событие.
+        """
         cutoff = time.time() - 70 * 60
         media_dir = Path(self.events_media_dir)
-        if not media_dir.exists():
+        if not media_dir.exists() or self.db is None or self.db.pool is None:
             return
 
+        candidates = [
+            f for f in media_dir.iterdir()
+            if f.is_file() and f.stat().st_mtime < cutoff
+        ]
+        if not candidates:
+            return
+
+        try:
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT photo_url FROM events WHERE photo_url LIKE $1",
+                    "/media/events/%",
+                )
+        except Exception as e:
+            logger.warning(f"stale photo DB check failed, skipping cleanup: {e}")
+            return
+
+        referenced = {row['photo_url'] for row in rows}
+
         deleted = 0
-        for f in media_dir.iterdir():
-            if f.is_file() and f.stat().st_mtime < cutoff:
-                try:
-                    f.unlink()
-                    deleted += 1
-                except FileNotFoundError:
-                    pass  # идемпотентно
-                except Exception as e:
-                    logger.warning(f"stale photo delete failed: {f}: {e}")
+        for f in candidates:
+            url = f"/media/events/{f.name}"
+            if url in referenced:
+                continue
+            try:
+                f.unlink()
+                deleted += 1
+            except FileNotFoundError:
+                pass  # идемпотентно
+            except Exception as e:
+                logger.warning(f"stale photo delete failed: {f}: {e}")
         if deleted:
-            logger.info(f"Stale photos cleaned: {deleted}")
+            logger.info(f"Stale photos cleaned (unreferenced): {deleted}")
 
     async def shutdown(self, drain_timeout: float = 20.0):
         """Корректно остановить бота: дождаться очереди, отменить задачи, закрыть соединения."""

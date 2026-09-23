@@ -14,6 +14,28 @@ const ICON_CONFIG: Record<string, { url: string; size: [number, number] }> = {
 // согласовано с легендой и чекбоксом в #layerControls.
 window.ICON_CONFIG = ICON_CONFIG;
 
+// Грейсфолл для битого/удалённого фото события. <img> не шлёт
+// Authorization-заголовок, а CSP map.html (script-src 'self' без unsafe-inline)
+// блокирует inline onerror — поэтому ловим error-img в capture-фазе на document
+// (событие error не всплывает, но проходит capture-стадию до document).
+function attachEventPhotoFallbackListener(): void {
+    document.addEventListener('error', (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLImageElement) || !target.hasAttribute('data-event-photo')) {
+            return;
+        }
+        if (target.style.display === 'none') {
+            return; // уже обработано — не дублируем заглушку на повторный error
+        }
+        target.style.display = 'none';
+        const hint = document.createElement('span');
+        hint.textContent = 'Фото недоступно';
+        hint.style.cssText = 'display:block;margin:8px 0;color:var(--tg-hint-color,#888);font-size:13px;';
+        target.insertAdjacentElement('afterend', hint);
+    }, true);
+}
+attachEventPhotoFallbackListener();
+
 window.preloadIcons = function(urls: string[]): void {
     for (const url of urls) {
         const img = new Image();
@@ -336,7 +358,7 @@ window.createPopupContent = function(properties: Record<string, unknown>): strin
 
     const photoUrl = sanitizeUrl(properties.photo_url);
     const photoHtml = photoUrl ?
-        `<div style="margin-top: 8px;"><img src="${photoUrl}" style="width: auto; max-width: 100%; height: auto; max-height: 80vh; border-radius: 8px;" alt="Event photo"></div>` : '';
+        `<div style="margin-top: 8px;"><img data-event-photo src="${photoUrl}" style="width: auto; max-width: 100%; height: auto; max-height: 80vh; border-radius: 8px;" alt="Event photo"></div>` : '';
 
     const timeHtml = time ? `<span style="font-weight: bold; display: block; margin-bottom: 4px;">${time}</span>` : '';
 

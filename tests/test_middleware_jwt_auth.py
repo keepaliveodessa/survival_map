@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 
 try:
-    from core.middlewares.jwt_auth import jwt_auth_middleware, PUBLIC_ENDPOINTS
+    from core.middlewares.jwt_auth import jwt_auth_middleware, PUBLIC_ENDPOINTS, PUBLIC_PREFIXES
     _IMPORT_OK = True
     _IMPORT_ERR = None
 except Exception as e:
@@ -67,6 +67,38 @@ class TestPublicEndpoints:
         resp = await _call(jwt_auth_middleware, req, handler)
         assert resp.status == 200
         assert handler.called is True
+
+
+class TestPublicMedia:
+    """Медиа публична по дизайну: nginx отдаёт статику без авторизации,
+    а API-fallback (nginx @api_fallback) проксирует без Authorization."""
+    @pytest.mark.parametrize("path", [
+        '/api/media',
+        '/api/media/',
+        '/api/media/events/photo123.jpg',
+        '/api/media/events/event_20260923_150505_559122.jpg',
+    ])
+    @pytest.mark.asyncio
+    async def test_media_bypasses_auth(self, path):
+        handler = FakeHandler()
+        req = FakeRequest(path=path)
+        resp = await _call(jwt_auth_middleware, req, handler)
+        assert resp.status == 200
+        assert handler.called is True
+
+    def test_public_prefixes_contains_media(self):
+        assert '/api/media' in PUBLIC_PREFIXES
+
+    @pytest.mark.asyncio
+    async def test_media_sibling_still_requires_auth(self):
+        """Соседний путь /api/mediax НЕ должен быть публичным префиксом."""
+        handler = FakeHandler()
+        req = FakeRequest(path='/api/mediax/events/photo.jpg', headers={'Authorization': 'Bearer'})
+        with patch('core.middlewares.jwt_auth.settings') as mock_settings:
+            mock_settings.app.telegram_webview_validation = True
+            resp = await _call(jwt_auth_middleware, req, handler)
+        assert resp.status == 401
+        assert handler.called is False
 
 
 class TestDevModeBypass:

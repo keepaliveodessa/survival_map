@@ -6,6 +6,10 @@ Telegram Mini App — интерактивная карта событий Од�
 времени отдаёт на карту через WebSocket. Клиент показывает события за последние
 60 минут и удаляет их сам (TTL).
 
+<p align="center">
+  <img src="assets/survival_map.gif" alt="Survival Map — анимация работы карты" width="320"/>
+</p>
+
 - **Извлечение улиц** — sliding-window матчер: морфология (`mawo-pymorphy3`) +
   fuzzy-сопоставление (`rapidfuzz`) против справочника гео-объектов (postgres/data/geo.csv). Без NER/нейросетей,
   CPU-only. Детали алгоритма — [docs/RULES_PARSER.md](docs/RULES_PARSER.md).

@@ -134,6 +134,14 @@ class TestParserMonitoringChecks:
         assert "OSError" in text
         assert "os.path.isfile" in text
 
+    def test_parser_stale_photo_cleanup_is_db_aware(self):
+        # R-P26: фото удаляется ТОЛЬКО если на него не ссылается ни одно
+        # событие (безусловное удаление рвало живое фото → 401/битая картинка).
+        text = _file_text("parser/monitoring.py")
+        assert "SELECT photo_url FROM events WHERE photo_url LIKE $1" in text
+        assert "url in referenced" in text
+        assert "skip" in text
+
 
 class TestDocsChecks:
     def test_no_core_settings_references(self):

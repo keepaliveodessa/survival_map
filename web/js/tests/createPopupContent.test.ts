@@ -18,7 +18,7 @@ describe('createPopupContent', () => {
       const dangerousProtocols = /^(javascript:|data:|vbscript:|file:|about:)/i;
       if (dangerousProtocols.test(url)) return '';
       if (url.includes('..') || url.includes('%2e') || url.includes('%2f') || url.includes('%5c')) return '';
-      return `<div style="margin-top: 8px;"><img src="${url}" style="width: auto; max-width: 100%; height: auto; max-height: 80vh; border-radius: 8px;" alt="Event photo"></div>`;
+      return `<div style="margin-top: 8px;"><img data-event-photo src="${url}" style="width: auto; max-width: 100%; height: auto; max-height: 80vh; border-radius: 8px;" alt="Event photo"></div>`;
     })();
 
     const description = properties.description ? (() => {
@@ -104,5 +104,64 @@ describe('createPopupContent', () => {
     const html = createPopupContent(props);
     expect(html).toContain('2024-01-01T12:00:00Z');
     expect(html).toContain('/media/events/photo.jpg');
+  });
+
+  test('marks event photo for graceful fallback', () => {
+    const props = { photo_url: '/media/events/photo.jpg' };
+    const html = createPopupContent(props);
+    expect(html).toContain('data-event-photo');
+  });
+});
+
+describe('event photo fallback (delegated error listener)', () => {
+  // Реплика обработчика из map.ts: error-img ловится в capture-фазе на document,
+  // т.к. inline onerror блокируется CSP (script-src 'self' без unsafe-inline).
+  const handleError = (img: HTMLImageElement): { hidden: boolean; hint: boolean } => {
+    if (!img.hasAttribute('data-event-photo')) return { hidden: false, hint: false };
+    if (img.style.display === 'none') return { hidden: true, hint: false };
+    img.style.display = 'none';
+    const hint = document.createElement('span');
+    hint.textContent = 'Фото недоступно';
+    img.insertAdjacentElement('afterend', hint);
+    return { hidden: true, hint: true };
+  };
+
+  test('hides broken event photo and inserts placeholder', () => {
+    document.body.innerHTML = '';
+    const img = document.createElement('img');
+    img.setAttribute('data-event-photo', '');
+    img.src = '/media/events/missing.jpg';
+    document.body.appendChild(img);
+
+    const result = handleError(img);
+    expect(result.hidden).toBe(true);
+    expect(result.hint).toBe(true);
+    expect(img.style.display).toBe('none');
+    expect(document.body.textContent).toContain('Фото недоступно');
+  });
+
+  test('does not touch unrelated images', () => {
+    document.body.innerHTML = '';
+    const img = document.createElement('img');
+    img.src = '/assets/images/bus.webp';
+    document.body.appendChild(img);
+
+    const result = handleError(img);
+    expect(result.hidden).toBe(false);
+    expect(img.style.display).toBe('');
+    expect(document.body.textContent).toBe('');
+  });
+
+  test('does not duplicate placeholder on repeated error', () => {
+    document.body.innerHTML = '';
+    const img = document.createElement('img');
+    img.setAttribute('data-event-photo', '');
+    img.src = '/media/events/missing.jpg';
+    document.body.appendChild(img);
+
+    handleError(img);
+    handleError(img);
+    expect(img.style.display).toBe('none');
+    expect(document.body.querySelectorAll('span').length).toBe(1);
   });
 });
