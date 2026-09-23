@@ -57,6 +57,12 @@ export class WebSocketManager {
     private snapshotTimer: number | null = null;
     private readonly SNAPSHOT_TIMEOUT_MS = 10_000;
 
+    // Credential wait — polling sessionStorage until access_token appears.
+    // Unlimited retries with exponential backoff (cap 30s).
+    private credentialRetryRunning = false;
+    private credentialRetryTimer: number | null = null;
+    private credentialRetryCount = 0;
+
     // ------------------------------------------------------------------ connect
 
     /** Open WebSocket connection with bearer or Telegram auth. */
@@ -72,7 +78,10 @@ export class WebSocketManager {
         const initData    = window.Telegram?.WebApp?.initData;
 
         if (!accessToken && !initData) {
-            console.error('[WS] No auth credentials available');
+            if (!this.credentialRetryRunning) {
+                console.warn('[WS] No auth credentials — starting credential wait loop');
+                this.startCredentialWait();
+            }
             return;
         }
 
@@ -102,6 +111,14 @@ export class WebSocketManager {
         this.isConnected      = true;
         this.reconnectAttempts = 0;
         this.missedPongs      = 0;
+
+        // Reset credential wait — token is valid, connection succeeded
+        this.credentialRetryRunning = false;
+        if (this.credentialRetryTimer !== null) {
+            window.clearTimeout(this.credentialRetryTimer);
+            this.credentialRetryTimer = null;
+        }
+        this.credentialRetryCount = 0;
 
         this.sendAuth();
         this.startHeartbeat();
@@ -320,6 +337,44 @@ export class WebSocketManager {
         }, delay);
     }
 
+    // ------------------------------------------------------ credential wait
+
+    /**
+     * Unlimited polling: periodically check sessionStorage for access_token.
+     * On discovery → reset counter and call connect(). Backoff: 1s → 2s → 4s → ... → 30s cap.
+     */
+    private startCredentialWait(): void {
+        this.credentialRetryRunning = true;
+
+        const poll = () => {
+            if (this.intentionallyClosed) {
+                this.credentialRetryRunning = false;
+                return;
+            }
+
+            const token = sessionStorage.getItem('access_token');
+            const initData = window.Telegram?.WebApp?.initData;
+
+            if (token || initData) {
+                console.log('[WS] Credentials available — connecting');
+                this.credentialRetryRunning = false;
+                this.credentialRetryCount = 0;
+                this.connect();
+                return;
+            }
+
+            this.credentialRetryCount++;
+            const delay = Math.min(
+                1000 * Math.pow(1.5, this.credentialRetryCount - 1),
+                30_000
+            );
+            console.log(`[WS] Waiting for credentials (check ${this.credentialRetryCount}, next in ${delay}ms)`);
+            this.credentialRetryTimer = window.setTimeout(poll, delay);
+        };
+
+        poll();
+    }
+
     // ------------------------------------------------------- self-heal lifecycle
 
     /**
@@ -335,7 +390,8 @@ export class WebSocketManager {
             window.clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
         }
-        this.reconnectAttempts = 0; // свежий бюджет на явном resume/online
+        this.reconnectAttempts = 0;
+        this.credentialRetryCount = 0;
         this.connect();
     }
 
@@ -443,6 +499,11 @@ export class WebSocketManager {
             window.clearTimeout(this.snapshotTimer);
             this.snapshotTimer = null;
         }
+        this.credentialRetryRunning = false;
+        if (this.credentialRetryTimer !== null) {
+            window.clearTimeout(this.credentialRetryTimer);
+            this.credentialRetryTimer = null;
+        }
         this.receivingSnapshot = false;
         this.snapshotBuffer = [];
         this.reconnectAttempts = Infinity; // prevent auto-reconnect
@@ -496,6 +557,11 @@ function initializeWebSocket(): void {
     window.webSocketManager.onConnectionStatusChange = (connected: boolean) => {
         if (typeof window.updateOnlineStatus === 'function') {
             window.updateOnlineStatus(connected);
+        }
+        const indicator = document.getElementById('connection-indicator');
+        if (indicator) {
+            indicator.className = connected ? 'status-online' : 'status-offline';
+            indicator.textContent = connected ? '' : 'Переподключение...';
         }
         console.log(connected ? '[WS] ✅ Live' : '[WS] ⚠️  Offline — serving localStorage');
     };

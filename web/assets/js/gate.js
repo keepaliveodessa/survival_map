@@ -9,6 +9,17 @@
         window.location.replace(url);
     }
 
+    function logRedirect(reason) {
+        fetch('/api/gate-redirect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                reason: reason,
+                user_agent: navigator.userAgent
+            })
+        }).catch(() => {});
+    }
+
     function isAbsoluteUrl(url) {
         try {
             new URL(url);
@@ -19,41 +30,54 @@
     }
 
     async function loadConfig() {
-        try {
-            const response = await fetch('/api/validation-config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({})
-            });
-            if (!response.ok) throw new Error('Config load failed');
-            return await response.json();
-        } catch (e) {
-            console.error('[Gate] Config load error:', e);
-            // Dev mode defaults: validation disabled, redirect to GitHub 404
-            return { telegram_webview_validation: false, redirect_url: null };
+        let attempt = 0;
+        while (true) {
+            attempt++;
+            try {
+                statusEl.textContent = attempt === 1
+                    ? 'Загрузка конфигурации...'
+                    : `Подключение к серверу (попытка ${attempt})...`;
+                const response = await fetch('/api/validation-config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                if (!response.ok) throw new Error('Config load failed');
+                return await response.json();
+            } catch (e) {
+                console.warn(`[Gate] Config load attempt ${attempt} failed:`, e.message);
+                const delay = Math.min(1000 * Math.pow(2, attempt - 1), 30_000);
+                await new Promise(r => setTimeout(r, delay));
+            }
         }
     }
 
     async function validateAndAuth(initData) {
-        try {
-            const response = await fetch('/api/validate-init', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ init_data: initData })
-            });
-            const result = await response.json();
+        let attempt = 0;
+        while (true) {
+            attempt++;
+            try {
+                statusEl.textContent = attempt === 1
+                    ? 'Вход в систему...'
+                    : `Вход в систему (попытка ${attempt})...`;
+                const response = await fetch('/api/validate-init', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ init_data: initData })
+                });
+                const result = await response.json();
 
-            if (result.valid && result.access_token) {
-                // Store tokens in sessionStorage
-                sessionStorage.setItem('access_token', result.access_token);
-                sessionStorage.setItem('refresh_token', result.refresh_token);
-                sessionStorage.setItem('user', JSON.stringify(result.user));
-                return true;
+                if (result.valid && result.access_token) {
+                    sessionStorage.setItem('access_token', result.access_token);
+                    sessionStorage.setItem('refresh_token', result.refresh_token);
+                    sessionStorage.setItem('user', JSON.stringify(result.user));
+                    return true;
+                }
+            } catch (e) {
+                console.warn(`[Gate] Auth attempt ${attempt} failed:`, e.message);
             }
-            return false;
-        } catch (e) {
-            console.error('[Gate] Auth error:', e);
-            return false;
+            const delay = Math.min(1000 * Math.pow(2, attempt - 1), 30_000);
+            await new Promise(r => setTimeout(r, delay));
         }
     }
 
@@ -79,29 +103,37 @@
         // Secure by Default, согласуется с _parse_strict_bool на бэкенде.
         if (config.telegram_webview_validation === false) {
             console.log('[Gate] Validation disabled (development mode)');
-            statusEl.textContent = 'Режим разработки...';
-
-            // Call validate-init to get dev tokens
-            try {
-                const response = await fetch('/api/validate-init', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ init_data: '' })
-                });
-                const result = await response.json();
-
-                if (result.valid && result.access_token) {
-                    sessionStorage.setItem('access_token', result.access_token);
-                    sessionStorage.setItem('refresh_token', result.refresh_token);
-                    sessionStorage.setItem('user', JSON.stringify(result.user));
-                }
-            } catch (e) {
-                console.error('[Gate] Failed to get dev tokens:', e);
-            }
-
             sessionStorage.setItem('dev_mode', 'true');
 
-            setTimeout(() => redirectTo('/map.html'), 500);
+            // Retry until we get a token — backend may be starting up
+            let attempt = 0;
+            while (true) {
+                attempt++;
+                try {
+                    statusEl.textContent = attempt === 1
+                        ? 'Режим разработки...'
+                        : `Получение токена (попытка ${attempt})...`;
+                    const response = await fetch('/api/validate-init', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ init_data: '' })
+                    });
+                    const result = await response.json();
+                    if (result.valid && result.access_token) {
+                        sessionStorage.setItem('access_token', result.access_token);
+                        sessionStorage.setItem('refresh_token', result.refresh_token);
+                        sessionStorage.setItem('user', JSON.stringify(result.user));
+                        console.log('[Gate] Dev token acquired on attempt', attempt);
+                        break;
+                    }
+                } catch (e) {
+                    console.warn(`[Gate] Dev token attempt ${attempt} failed:`, e.message);
+                }
+                const delay = Math.min(1000 * Math.pow(2, attempt - 1), 30_000);
+                await new Promise(r => setTimeout(r, delay));
+            }
+
+            setTimeout(() => redirectTo('/map.html'), 300);
             return;
         }
 
@@ -146,6 +178,7 @@
         if (!window.Telegram || !window.Telegram.WebApp) {
             console.warn('[Gate] Not Telegram WebApp');
             statusEl.textContent = 'Перенаправление...';
+            logRedirect('sdk_unavailable');
             setTimeout(() => redirectTo(redirectUrl), 100);
             return;
         }
@@ -156,6 +189,7 @@
         if (!initData) {
             console.warn('[Gate] No initData');
             statusEl.textContent = 'Перенаправление...';
+            logRedirect('no_initData');
             setTimeout(() => redirectTo(redirectUrl), 100);
             return;
         }
@@ -167,6 +201,7 @@
         if (!isValid) {
             console.warn('[Gate] Validation failed');
             statusEl.textContent = 'Перенаправление...';
+            logRedirect('validation_failed');
             setTimeout(() => redirectTo(redirectUrl), 100);
             return;
         }
@@ -181,6 +216,7 @@
     } catch (e) {
         console.error('[Gate] Error:', e);
         statusEl.textContent = 'Перенаправление...';
+        logRedirect('gate_error');
         setTimeout(() => redirectTo(redirectUrl), 100);
     }
 })();

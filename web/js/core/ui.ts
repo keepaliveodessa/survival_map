@@ -351,10 +351,8 @@ function initializeMapLayers(map: L.Map): void {
 window.updateOnlineStatus = function(isOnline: boolean): void {
     const connectionIndicator = document.getElementById('connection-indicator');
     if (connectionIndicator) {
-        connectionIndicator.style.display = isOnline ? 'none' : 'block';
-        if (!isOnline) {
-            connectionIndicator.textContent = '⚠️ Нет связи с сервером';
-        }
+        connectionIndicator.className = isOnline ? 'status-online' : 'status-offline';
+        connectionIndicator.textContent = isOnline ? '' : 'Переподключение...';
     }
 };
 

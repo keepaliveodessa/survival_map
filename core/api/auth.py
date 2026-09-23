@@ -137,6 +137,28 @@ async def validate_init_handler(request: web.Request) -> web.Response:
     })
 
 
+async def gate_redirect_handler(request: web.Request) -> web.Response:
+    """
+    Log gate redirect for admin diagnostics.
+    POST /api/gate-redirect
+    Body: {"reason": "sdk_unavailable|no_initData|validation_failed|gate_error", "user_agent": "..."}
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    reason = data.get('reason', 'unknown')
+    ua = data.get('user_agent', '')
+    remote = request.remote or 'unknown'
+
+    logger.warning(
+        f"[Gate-Redirect] reason={reason} ua={ua} remote={remote}"
+    )
+
+    return web.Response(status=204)
+
+
 async def refresh_token_handler(request: web.Request) -> web.Response:
     """
     Refresh access token using refresh token (Refresh Token Rotation).

@@ -20,60 +20,65 @@
 
   // Confirm the session with the backend before loading any component.
   // Returns true to proceed, false when redirecting/reloading.
+  // Retries indefinitely on network errors — backend may be starting up.
   async function confirmSession() {
-    let response;
-    try {
-      response = await fetch('/api/config', {
-        method: 'POST',
-        headers: window.getAuthHeaders(),
-        body: JSON.stringify({})
-      });
-    } catch (err) {
-      // Network error → offline. PWA rule 1: trust the prior session and
-      // run from the service-worker shell + localStorage cache.
-      console.warn('[GATE] Offline — proceeding from cache:', err);
-      return true;
-    }
-
-    if (response.status === 401) {
-      // Token expired/invalid — a single refresh attempt.
-      const refreshToken = sessionStorage.getItem('refresh_token');
-      if (refreshToken) {
-        try {
-          const r = await fetch('/api/auth/refresh', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh_token: refreshToken })
-          });
-          if (r.ok) {
-            const d = await r.json();
-            sessionStorage.setItem('access_token', d.access_token);
-            location.reload();
-            return false;
-          }
-        } catch (e) {
-          console.error('[GATE] Refresh failed:', e);
-        }
-      }
-      // Invalid session → gate page handles REDIRECT_URL.
-      window.location.replace('/index.html');
-      return false;
-    }
-
-    if (response.ok) {
+    let attempt = 0;
+    while (true) {
+      attempt++;
+      let response;
       try {
-        const serverConfig = await response.json();
-        window.APP_CONFIG = { ...window.APP_CONFIG, ...serverConfig };
-        console.log('[GATE] Session confirmed, config loaded');
-      } catch (e) {
-        console.warn('[GATE] Config parse failed, using defaults');
+        response = await fetch('/api/config', {
+          method: 'POST',
+          headers: window.getAuthHeaders(),
+          body: JSON.stringify({})
+        });
+      } catch (err) {
+        console.warn(`[GATE] Offline (attempt ${attempt}) — retrying:`, err.message);
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 30_000);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
       }
-      return true;
-    }
 
-    console.warn('[GATE] Unexpected /api/config status:', response.status);
-    window.location.replace('/index.html');
-    return false;
+      if (response.status === 401) {
+        // Token expired/invalid — a single refresh attempt.
+        const refreshToken = sessionStorage.getItem('refresh_token');
+        if (refreshToken) {
+          try {
+            const r = await fetch('/api/auth/refresh', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refresh_token: refreshToken })
+            });
+            if (r.ok) {
+              const d = await r.json();
+              sessionStorage.setItem('access_token', d.access_token);
+              location.reload();
+              return false;
+            }
+          } catch (e) {
+            console.error('[GATE] Refresh failed:', e);
+          }
+        }
+        // Invalid session → gate page handles REDIRECT_URL.
+        window.location.replace('/index.html');
+        return false;
+      }
+
+      if (response.ok) {
+        try {
+          const serverConfig = await response.json();
+          window.APP_CONFIG = { ...window.APP_CONFIG, ...serverConfig };
+          console.log('[GATE] Session confirmed, config loaded');
+        } catch (e) {
+          console.warn('[GATE] Config parse failed, using defaults');
+        }
+        return true;
+      }
+
+      console.warn('[GATE] Unexpected /api/config status:', response.status);
+      const delay = Math.min(1000 * Math.pow(2, attempt - 1), 30_000);
+      await new Promise(r => setTimeout(r, delay));
+    }
   }
 
   const sessionOk = await confirmSession();
@@ -119,7 +124,11 @@
     console.log('✅ All components loaded');
 
     if (window.tokenManager) {
-      await window.tokenManager.init();
+      const tokenOk = await window.tokenManager.init();
+      if (!tokenOk) {
+        console.log('[BOOT] No token after init — starting token poller');
+        startTokenPoller();
+      }
     }
     if (window.bootstrapUI) {
       window.bootstrapUI();
@@ -145,5 +154,21 @@
     navigator.serviceWorker.register('/sw.js').catch((e) => {
       console.warn('[SW] registration failed:', e);
     });
+  }
+
+  // Token poller — retries acquireToken() every 3s until success.
+  // WebSocket credential wait runs independently; this is a secondary path
+  // that proactively tries refresh when gate.js didn't provide tokens.
+  function startTokenPoller() {
+    const poll = async () => {
+      const token = await window.tokenManager?.acquireToken?.();
+      if (token) {
+        console.log('[BOOT] Token acquired — triggering WebSocket connect');
+        window.webSocketManager?.connect?.();
+        return;
+      }
+      setTimeout(poll, 3000);
+    };
+    poll();
   }
 })();

@@ -186,6 +186,17 @@
         const accessToken = getAccessToken();
 
         if (!accessToken) {
+            // No access_token — try refresh if refresh_token exists
+            const rt = getRefreshToken();
+            if (rt) {
+                console.log('[TokenManager] No access token, attempting refresh...');
+                const refreshed = await refreshAccessToken();
+                if (refreshed) {
+                    scheduleRefresh();
+                    console.log('[TokenManager] Initialized via refresh');
+                    return true;
+                }
+            }
             console.log('[TokenManager] No access token found');
             return false;
         }
@@ -229,6 +240,32 @@
     }
 
     /**
+     * Re-acquire a valid token:
+     * 1. Check sessionStorage (token may have appeared from gate.js retry)
+     * 2. Try refresh if refresh_token exists
+     * Called by map-bootstrap.js poller and websocket credential wait.
+     */
+    async function acquireToken(): Promise<string | null> {
+        let token = getAccessToken();
+        if (token && !isTokenExpired(token)) return token;
+
+        // Refresh if token exists but expired
+        if (token && isTokenExpired(token)) {
+            const refreshed = await refreshAccessToken();
+            if (refreshed) return refreshed;
+        }
+
+        // Refresh if refresh_token exists but access_token is missing
+        const rt = getRefreshToken();
+        if (rt) {
+            const refreshed = await refreshAccessToken();
+            if (refreshed) return refreshed;
+        }
+
+        return null;
+    }
+
+    /**
      * Stop auto-refresh
      */
     function destroy() {
@@ -245,6 +282,7 @@
         getAccessToken,
         getRefreshToken,
         getValidToken,
+        acquireToken,
         storeTokens,
         clearTokens,
         isTokenExpired,

@@ -25,7 +25,8 @@ from core.api.websocket import websocket_handler
 from core.api.auth import (
     validate_init_handler,
     get_validation_config_handler,
-    refresh_token_handler
+    refresh_token_handler,
+    gate_redirect_handler
 )
 
 from core.api.media import setup_media_routes
@@ -47,6 +48,7 @@ def setup_routes(app: web.Application):
     app.router.add_post('/api/validation-config', get_validation_config_handler)  # legacy compat
     app.router.add_post('/api/validate-init', validate_init_handler)
     app.router.add_post('/api/auth/refresh', refresh_token_handler)
+    app.router.add_post('/api/gate-redirect', gate_redirect_handler)
 
     # Events API
     app.router.add_post('/api/events', get_events_handler)  # POST для инкрементальных обновлений

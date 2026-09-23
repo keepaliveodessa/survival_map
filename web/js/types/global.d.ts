@@ -148,6 +148,7 @@ declare global {
             getAccessToken(): string | null;
             getRefreshToken(): string | null;
             getValidToken(): Promise<string | null>;
+            acquireToken(): Promise<string | null>;
             storeTokens(accessToken: string, refreshToken?: string): void;
             clearTokens(): void;
             isTokenExpired(token: string, thresholdMs?: number): boolean;
