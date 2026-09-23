@@ -1,0 +1,14 @@
+# Loki + Promtail — единый контейнер для лог-агрегации.
+# Promtail (log shipper) встраивается в Loki-образ через multi-stage build.
+# Entrypoint-скрипт запускает оба процесса параллельно; падение любого из
+# них приводит к exit 1 и перезапуску контейнера через restart: unless-stopped.
+
+FROM grafana/promtail:3.4.2 AS promtail-src
+
+FROM grafana/loki:3.4.2
+
+COPY --from=promtail-src /usr/bin/promtail /usr/bin/promtail
+COPY monitoring/loki/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

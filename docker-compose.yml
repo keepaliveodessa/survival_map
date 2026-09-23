@@ -306,7 +306,7 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
-# =============================================================================
+
   # =============================================================================
   # cAdvisor - метрики контейнеров (CPU/RAM/сеть) для prometheus
   # =============================================================================
@@ -343,11 +343,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '0.2'
+          memory: 128M
         reservations:
           cpus: '0.1'
-          memory: 128M
+          memory: 64M
     restart: unless-stopped
     logging: *default-logging
 
@@ -378,11 +378,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.25'
-          memory: 128M
-        reservations:
           cpus: '0.1'
           memory: 64M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
     restart: unless-stopped
     logging: *default-logging
 
@@ -395,7 +395,7 @@ services:
     profiles:
       - monitoring
     volumes:
-      - ./postgres/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -417,10 +417,10 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 512M
+          memory: 384M
         reservations:
           cpus: '0.1'
-          memory: 128M
+          memory: 96M
     restart: unless-stopped
     logging: *default-logging
 
@@ -437,9 +437,9 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./postgres/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       # JSON-дашборды для file-provisioner (provider.yml → /var/lib/grafana/dashboards)
-      - ./postgres/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     networks:
       - monitoring
     expose:
@@ -454,26 +454,34 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '0.2'
+          memory: 192M
         reservations:
           cpus: '0.1'
-          memory: 64M
+          memory: 48M
     restart: unless-stopped
     logging: *default-logging
 
   # =============================================================================
-  # Loki - log aggregation
+  # Loki + Promtail — log aggregation + Docker log collector (единый контейнер).
+  # Promtail встроен в Loki-образ через multi-stage Dockerfile; entrypoint.sh
+  # запускает оба процесса параллельно. Падение любого → exit 1 → restart.
   # =============================================================================
   loki:
-    image: grafana/loki:3.4.2
+    image: survival_loki:latest
+    build:
+      context: .
+      dockerfile: monitoring/loki/Dockerfile.loki
+      network: host
     container_name: loki
     profiles:
       - monitoring
     volumes:
-      - ./postgres/monitoring/loki.yml:/etc/loki/local-config.yaml:ro
+      - ./monitoring/loki/loki.yml:/etc/loki/local-config.yaml:ro
+      - ./monitoring/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - loki_data:/loki
-    command: -config.file=/etc/loki/local-config.yaml
     networks:
       - monitoring
     expose:
@@ -481,39 +489,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '0.35'
+          memory: 384M
         reservations:
-          cpus: '0.1'
-          memory: 64M
-    restart: unless-stopped
-    logging: *default-logging
-
-  # =============================================================================
-  # Promtail - Docker log collector
-  # =============================================================================
-  promtail:
-    image: grafana/promtail:3.4.2
-    container_name: promtail
-    profiles:
-      - monitoring
-    volumes:
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./postgres/monitoring/promtail.yml:/etc/promtail/config.yml:ro
-    command: -config.file=/etc/promtail/config.yml
-    networks:
-      - monitoring
-    depends_on:
-      - loki
-    deploy:
-      resources:
-        limits:
-          cpus: '0.1'
-          memory: 128M
-        reservations:
-          cpus: '0.05'
-          memory: 32M
+          cpus: '0.15'
+          memory: 96M
     restart: unless-stopped
     logging: *default-logging
 
