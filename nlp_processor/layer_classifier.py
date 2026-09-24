@@ -105,7 +105,11 @@ class LayerClassifier:
             # Блокпост — situational keyword, ВСЕГДА traffic, даже если
             # в тексте есть «менты»/«мусора» (cops). Слово «блокпост»
             # не является гео-названием — это situation descriptor.
-            if 'блокпост' in token_lemmas or 'бп' in token_lemmas:
+            # «блопост» — частая опечатка (events_export5 id 10: сообщение
+            # с «блопост между Толбухина…» падало в pig вместо traffic);
+            # правило то же — ситуационный дескриптор, а не гео-имя.
+            if ('блокпост' in token_lemmas or 'бп' in token_lemmas
+                    or 'блопост' in token_lemmas):
                 result = 'traffic'
             # HARD RULE 2 (REG-фикс): шаблонные пины (📍/📌 + Адрес:) —
             # сначала словарная классификация по ЗАГОЛОВКУ (текст до 🏠).
