@@ -1,9 +1,9 @@
 # Rules — Processor Service (NLP Pipeline) v2.1
 
-**Сервис:** `processor/` (pymorphy3 + rapidfuzz + PostGIS)
-**Точка входа:** `python -m processor.main`
+**Сервис:** `nlp_processor/` (pymorphy3 + rapidfuzz + PostGIS)
+**Точка входа:** `python -m nlp_processor.main`
 **Порт:** Нет (только heartbeat healthcheck)
-**Docker:** Multi-stage build, `COPY --chown=processor:processor`, non-root, tmpfs /tmp 50m
+**Docker:** Multi-stage build, `COPY --chown=nlp_processor:nlp_processor`, non-root, tmpfs /tmp 50m
 
 ---
 
@@ -26,7 +26,7 @@ pending_events → tokenize → lemmatize → classify → find_geo → process_
 Processor работает в одном asyncio event loop с пулом воркеров:
 
 ```python
-self._worker_concurrency = max(1, min(8, settings.processor.worker_concurrency))
+self._worker_concurrency = max(1, min(8, settings.nlp_processor.worker_concurrency))
 
 for _ in range(self._worker_concurrency):
     self._spawn_worker()
@@ -36,7 +36,7 @@ for _ in range(self._worker_concurrency):
 
 ### R-PR3: Graceful shutdown — drain + cancel
 
-При SIGTERM processor:
+При SIGTERM nlp_processor:
 1. `self._running = False` — воркеров перестают появляться новые
 2. Все worker tasks отменяются через `task.cancel()`
 3. `asyncio.gather(*tasks, return_exceptions=True)` — ждём завершения
@@ -169,7 +169,7 @@ inserted AS (
 )
 ```
 
-**Правило:** Если v2 вернул `random_null` (geom=NULL), processor генерирует случайную точку через `_random_point()` и вставляет со strategy=`random` (R-PR22). Random точка НЕ генерируется внутри SQL.
+**Правило:** Если v2 вернул `random_null` (geom=NULL), nlp_processor генерирует случайную точку через `_random_point()` и вставляет со strategy=`random` (R-PR22). Random точка НЕ генерируется внутри SQL.
 
 ### R-PR11: Pending events — двухфазный claim + очиститель
 
@@ -356,7 +356,7 @@ Processor НЕ ДОЛЖЕН анализировать семантику тек
 
 ```yaml
 # docker-compose.yml
-processor:
+nlp_processor:
   user: "1000:1000"
   security_opt:
     - no-new-privileges:true
@@ -430,4 +430,4 @@ if not has_proper:
 
 ---
 
-*Правила основаны на анализе кодовой базы processor/ — август 2026 (обновлено: Docker security, tmpfs, COPY --chown)*
+*Правила основаны на анализе кодовой базы nlp_processor/ — август 2026 (обновлено: Docker security, tmpfs, COPY --chown)*

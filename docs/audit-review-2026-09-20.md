@@ -1,6 +1,6 @@
 # Аудит проекта Survival Map — 2026-09-20
 
-Полное ревью кодовой базы: архитектура, backend (core/parser/processor/common),
+Полное ревью кодовой базы: архитектура, backend (core/parser/nlp_processor/common),
 frontend (web), PostgreSQL-схема, инфраструктура (Docker, nginx, CI/CD), тесты и
 безопасность.
 
@@ -33,7 +33,7 @@ at-least-once, circuit breaker, graceful shutdown повсюду, watermark-си
 ## 2. Сильные стороны
 
 ### Архитектура
-- Чистый поток данных `parser → pending_events → processor → events (PostGIS)
+- Чистый поток данных `parser → pending_events → nlp_processor → events (PostGIS)
   → pg_notify → core → WS → карта`; сети Docker изолированы (`db: internal`),
   наружу только web:80.
 - Очередь `pending_events`: двухфазный claim (`FOR UPDATE SKIP LOCKED` + статус
@@ -163,7 +163,7 @@ promtail, postgres-exporter) — основные сервисы запинен�
 - eslint warnings — false positives (`security/detect-non-literal-regexp` в
   map.ts, `detect-non-literal-fs-filename` в telegram/integration.ts — это
   Telegram WebApp API, не node fs).
-- «exception while scanning» у bandit на processor/* — несовместимость bandit
+- «exception while scanning» у bandit на nlp_processor/* — несовместимость bandit
   1.7.10 с локальным Python 3.14; в CI (3.11) сканирование проходит.
 - Схема events: constraint-миграции (`UPDATE strategy ...`) в init-скрипте
   выполняются только при создании тома — осознанный trade-off, задокументирован.

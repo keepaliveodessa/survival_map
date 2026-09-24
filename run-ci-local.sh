@@ -51,19 +51,19 @@ printf "\n${YELLOW}▶ STAGE: security-scan${NC}\n"
 
 run_job "bandit-scan" "python:3.11-slim-bookworm" \
     "pip install --quiet bandit==1.7.10 && \
-     bandit -r core/ processor/ parser/ -ll -x '*/tests/*,scripts,processor/models' && \
+     bandit -r core/ nlp_processor/ parser/ -ll -x '*/tests/*,scripts,nlp_processor/models' && \
      bandit -ll core/utils/validators.py"
 
 run_job "pip-audit" "python:3.11-slim-bookworm" \
     "pip install --quiet pip-audit==2.7.3 && \
      pip-audit -r requirements.txt && \
-     pip-audit -r processor/requirements.txt && \
+     pip-audit -r nlp_processor/requirements.txt && \
      pip-audit -r parser/requirements.txt && \
      pip-audit -r requirements-dev.txt"
 
 run_job "hadolint" "hadolint/hadolint:v2.12.0-alpine" \
     "hadolint --failure-threshold warning Dockerfile.core && \
-     hadolint --failure-threshold warning Dockerfile.processor && \
+     hadolint --failure-threshold warning Dockerfile.nlp_processor && \
      hadolint --failure-threshold warning Dockerfile.parser && \
      hadolint --failure-threshold warning Dockerfile.web && \
      hadolint --failure-threshold warning Dockerfile.postgres"

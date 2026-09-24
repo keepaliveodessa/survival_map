@@ -22,7 +22,7 @@ Telegram → strip_tail → preprocess_light → INSERT INTO pending_events
 - импорт `GeoMatcher`, `SemanticResolver`, `LayerClassifier`
 - любой NLP-код (лемматизация, стемминг, токенизация)
 
-**Исключение:** `text_preprocessor.py` — это **общий** модуль, переиспользуемый processor. Parser использует только `strip_tail` и `preprocess_light`.
+**Исключение:** `text_preprocessor.py` — это **общий** модуль, переиспользуемый nlp_processor. Parser использует только `strip_tail` и `preprocess_light`.
 
 ### R-P2: Async архитектура — один event loop
 

@@ -48,7 +48,7 @@ ALTER TABLE pending_events SET (
 -- Geo table — low churn, read-heavy
 -- =============================================================================
 -- Geo objects are rarely updated (manual admin changes).
--- Mostly read by processor for matching. No aggressive vacuum needed.
+-- Mostly read by nlp_processor for matching. No aggressive vacuum needed.
 
 ALTER TABLE geo SET (
     -- Higher thresholds: geo table is stable

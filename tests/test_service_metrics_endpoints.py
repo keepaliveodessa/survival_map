@@ -1,7 +1,7 @@
-"""Tests for /metrics endpoints of parser and processor services.
+"""Tests for /metrics endpoints of parser and nlp_processor services.
 
 Parser: prometheus_client.start_http_server (common.metrics.start_metrics_server).
-Processor: aiohttp handler в processor/health.py (HealthServer.handle_metrics).
+Processor: aiohttp handler в nlp_processor/health.py (HealthServer.handle_metrics).
 """
 import pytest
 
@@ -64,23 +64,23 @@ class TestProcessorMetricsHandler:
     @pytest.fixture
     def health_server(self):
         try:
-            from processor.health import HealthServer
+            from nlp_processor.health import HealthServer
         except Exception as e:  # pragma: no cover - aiohttp/asyncpg отсутствуют
-            pytest.skip(f"processor.health import unavailable: {e}")
+            pytest.skip(f"nlp_processor.health import unavailable: {e}")
         return HealthServer()
 
     @pytest.mark.asyncio
     async def test_metrics_handler_returns_prometheus_payload(self, health_server):
         from aiohttp.test_utils import make_mocked_request
 
-        metrics.processor_messages_processed_total.inc(2)
+        metrics.nlp_processor_messages_processed_total.inc(2)
 
         request = make_mocked_request("GET", "/metrics")
         resp = await health_server.handle_metrics(request)
 
         assert resp.status == 200
         body = resp.body.decode("utf-8")
-        assert "processor_messages_processed_total" in body
+        assert "nlp_processor_messages_processed_total" in body
         assert "python_info" in body
 
     @pytest.mark.asyncio

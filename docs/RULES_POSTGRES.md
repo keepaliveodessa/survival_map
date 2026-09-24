@@ -16,7 +16,7 @@ PostgreSQL в этом проекте **НЕ является** архивным
 
 1. **Геопространственный калькулятор:** Выполнение тяжёлых PostGIS-операций (`process_candidates_v2`, `ST_Distance`, `ST_MakeValid`) внутри CTE, чтобы избежать пересылки сырых координат в Python.
 2. **Краткосрочный буфер состояний:** Хранение актуальных событий строго за последний ~1 час (TTL). Данные старше 1 часа удаляются (DROP партиций + DELETE строк).
-3. **In-memory брокер:** Использование `pg_notify` для мгновенного проброса событий между processor → core.
+3. **In-memory брокер:** Использование `pg_notify` для мгновенного проброса событий между nlp_processor → core.
 
 **Следствия для разработки:**
 
@@ -168,7 +168,7 @@ max_connections = 50  -- 3 services × pool_max_size=10 = 30 max; headroom for p
 ```
 
 **Правило:** `pool_max_size` на стороне приложения ≤ `max_connections / количество_сервисов`.
-3 сервиса (parser, processor, core) подключаются напрямую к PostgreSQL через internal `db` network.
+3 сервиса (parser, nlp_processor, core) подключаются напрямую к PostgreSQL через internal `db` network.
 `pool_max_size=10` × 3 = 30, что ≤ `max_connections=50` с запасом 20 для pg_cron и админ-запросов.
 
 ### R-C15: asyncpg pool — min/max sizing
@@ -263,16 +263,16 @@ SELECT geom FROM geo WHERE id = $1;  -- может быть invalid
 
 | Стратегия | Тип геометрии | Когда |
 |-----------|---------------|-------|
-| `random` | POINT | 0 совпадений (генерируется processor) |
+| `random` | POINT | 0 совпадений (генерируется nlp_processor) |
 | `random_null` | NULL | Внутренний маркер: v2 не смог вычислить геометрию |
 | `single_match` | Любой | 1 совпадение (score >= порога, по умолчанию 0.70) |
 | `intersection` | POINT | Компактный кластер кандидатов (spread <= 40м), нет валидного street_segment |
 | `street_segment` | LINESTRING / MULTILINESTRING | Линия, имеющая связь с 2+ кандидатами (ST_Intersects или ST_DWithin <= 50м) |
 | `weighted_centroid` | POINT | 2+ кандидатов, scatter <= 1500м, **нет ни одного пересечения** между кандидатами |
 
-**Правило:** `random`, `intersection`, `weighted_centroid` ВСЕГДА возвращают POINT (валидация через триггер). `street_segment` возвращает LINESTRING или MULTILINESTRING. `single_match` может быть любым типом. `random_null` имеет geom=NULL и НЕ проходит триггер — processor конвертирует в `random` перед INSERT.
+**Правило:** `random`, `intersection`, `weighted_centroid` ВСЕГДА возвращают POINT (валидация через триггер). `street_segment` возвращает LINESTRING или MULTILINESTRING. `single_match` может быть любым типом. `random_null` имеет geom=NULL и НЕ проходит триггер — nlp_processor конвертирует в `random` перед INSERT.
 
-**District-кандидаты (R-DB8.district):** кандидат с типом `district` НИКОГДА не становится финальным объектом и не участвует в построении геометрий (гипотезы single_match/intersection/street_segment/weighted_centroid). district используется ТОЛЬКО как фильтр: остальные кандидаты вне полигона района отбрасываются. Если district — единственный кандидат (или все кандидаты отфильтрованы районом), функция возвращает `random_null` → processor вставляет событие со стратегией `random` (R-PR22).
+**District-кандидаты (R-DB8.district):** кандидат с типом `district` НИКОГДА не становится финальным объектом и не участвует в построении геометрий (гипотезы single_match/intersection/street_segment/weighted_centroid). district используется ТОЛЬКО как фильтр: остальные кандидаты вне полигона района отбрасываются. Если district — единственный кандидат (или все кандидаты отфильтрованы районом), функция возвращает `random_null` → nlp_processor вставляет событие со стратегией `random` (R-PR22).
 
 **Описание стратегий v2:**
 - `single_match`: выбирается один кандидат с highest score. При score >= `p_score_threshold` (по умолчанию 0.70, настраивается через `GEO_CANDIDATE_MIN_SCORE`) → участвует в гипотезах. При anti-list guard (сильный выброс >3000м) → принудительный single_match.
@@ -297,7 +297,7 @@ IF NEW.strategy = 'street_segment'
 END IF;
 ```
 
-**Правило:** `random_null` имеет geom=NULL и НЕ проходит через триггер — processor конвертирует в `random` перед INSERT. Невалидная комбинация → INSERT/UPDATE отклоняется с ошибкой.
+**Правило:** `random_null` имеет geom=NULL и НЕ проходит через триггер — nlp_processor конвертирует в `random` перед INSERT. Невалидная комбинация → INSERT/UPDATE отклоняется с ошибкой.
 
 ### R-DB10: process_candidates_v2 — контракт функции
 
@@ -443,7 +443,7 @@ max_connections = 50  -- 3 services × pool_max_size=10 = 30 max; headroom for p
 ```
 
 **Правило:** `pool_max_size` на стороне приложения ≤ `max_connections / количество_сервисов`.
-3 сервиса (parser, processor, core) подключаются напрямую к PostgreSQL через internal `db` network.
+3 сервиса (parser, nlp_processor, core) подключаются напрямую к PostgreSQL через internal `db` network.
 `pool_max_size=10` × 3 = 30, что ≤ `max_connections=50` с запасом 20 для pg_cron и админ-запросов.
 
 ### R-DB16: Statement timeout

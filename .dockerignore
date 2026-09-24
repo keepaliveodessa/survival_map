@@ -46,7 +46,7 @@ docs/
 
 # Legacy & stale directories
 legacy/
-parser/processor/
+parser/nlp_processor/
 postgres/init-scripts/data/
 
 # Node modules

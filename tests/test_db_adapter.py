@@ -1,4 +1,4 @@
-"""Tests for common/db_adapter.py — DBAdapter (shared by parser & processor)."""
+"""Tests for common/db_adapter.py — DBAdapter (shared by parser & nlp_processor)."""
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

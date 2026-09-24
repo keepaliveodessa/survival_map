@@ -1,4 +1,4 @@
-"""Tests for common/metrics.py — shared parser/processor Prometheus metrics."""
+"""Tests for common/metrics.py — shared parser/nlp_processor Prometheus metrics."""
 import importlib
 import sys
 import types
@@ -40,30 +40,30 @@ class TestRealRegistry:
         assert REGISTRY.get_sample_value("parser_queue_size") == 42.0
         assert REGISTRY.get_sample_value("parser_backpressure_active") == 1.0
 
-    def test_processor_counters_registered(self):
+    def test_nlp_processor_counters_registered(self):
         from prometheus_client import REGISTRY
 
         for name in (
-            "processor_messages_processed_total",
-            "processor_messages_errors_total",
-            "processor_messages_expired_total",
+            "nlp_processor_messages_processed_total",
+            "nlp_processor_messages_errors_total",
+            "nlp_processor_messages_expired_total",
         ):
             assert name in REGISTRY._names_to_collectors, name
 
-    def test_processor_gauges_registered(self):
+    def test_nlp_processor_gauges_registered(self):
         from prometheus_client import REGISTRY
 
-        processor_worker_active = REGISTRY._names_to_collectors[
-            "processor_worker_active"
+        nlp_processor_worker_active = REGISTRY._names_to_collectors[
+            "nlp_processor_worker_active"
         ]
-        processor_circuit_breaker_state = REGISTRY._names_to_collectors[
-            "processor_circuit_breaker_state"
+        nlp_processor_circuit_breaker_state = REGISTRY._names_to_collectors[
+            "nlp_processor_circuit_breaker_state"
         ]
-        processor_worker_active.set(4)
-        processor_circuit_breaker_state.set(2)  # OPEN
-        assert REGISTRY.get_sample_value("processor_worker_active") == 4.0
+        nlp_processor_worker_active.set(4)
+        nlp_processor_circuit_breaker_state.set(2)  # OPEN
+        assert REGISTRY.get_sample_value("nlp_processor_worker_active") == 4.0
         assert (
-            REGISTRY.get_sample_value("processor_circuit_breaker_state") == 2.0
+            REGISTRY.get_sample_value("nlp_processor_circuit_breaker_state") == 2.0
         )
 
     def test_start_metrics_server_serves_metrics(self):
@@ -77,7 +77,7 @@ class TestRealRegistry:
 
         body = generate_latest().decode("utf-8")
         assert "parser_messages_processed_total" in body
-        assert "processor_circuit_breaker_state" in body
+        assert "nlp_processor_circuit_breaker_state" in body
 
 
 class TestFallbackWithoutPrometheusClient:
@@ -121,5 +121,5 @@ class TestFallbackWithoutPrometheusClient:
         # Не падают и ничего не делают:
         m.parser_messages_processed_total.inc()
         m.parser_queue_size.set(10)
-        m.processor_circuit_breaker_state.set(2)
+        m.nlp_processor_circuit_breaker_state.set(2)
         assert m.start_metrics_server(9100) is False

@@ -96,7 +96,7 @@ result.json
 
 # Local model caches (not committed)
 parser/models/
-processor/models/
+nlp_processor/models/
 model/models/
 model/.cache/
 data/

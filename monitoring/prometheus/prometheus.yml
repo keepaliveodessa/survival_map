@@ -35,7 +35,7 @@ scrape_configs:
           service: parser
 
   # ------------------------------------------------------------------
-  # NLP Processor: processor_messages_*, processor_worker_active, ...
+  # NLP Processor: nlp_processor_messages_*, nlp_processor_worker_active, ...
   # ------------------------------------------------------------------
   - job_name: nlp_processor
     static_configs:

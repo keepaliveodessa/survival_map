@@ -1,13 +1,13 @@
-"""Regression: gauge processor_circuit_breaker_state updates in the run loop.
+"""Regression: gauge nlp_processor_circuit_breaker_state updates in the run loop.
 
-Пойманный в рантайме баг: в ProcessorBot.run() гейдж обновлялся через
+Пойманный в рантайме баг: в NlpProcessorBot.run() гейдж обновлялся через
 self._CIRCUIT_STATE_PROM (несуществующий атрибут инстанса) вместо модульной
 константы — процессор падал сразу после старта health-сервера
-(Fatal error: 'ProcessorBot' object has no attribute '_CIRCUIT_STATE_PROM').
+(Fatal error: 'NlpProcessorBot' object has no attribute '_CIRCUIT_STATE_PROM').
 
-Конструктор ProcessorBot не используется (Morphology/ProcessPoolExecutor
+Конструктор NlpProcessorBot не используется (Morphology/ProcessPoolExecutor
 тяжёлые и могут зависать в песочнице): инстанс создаётся через object.__new__
-с минимальным набором атрибутов для run(). Импорт processor.main требует
+с минимальным набором атрибутов для run(). Импорт nlp_processor.main требует
 полных зависимостей — в пустом dev-venv пропускается; в CI (integration-tests)
 ловит подобные ошибки атрибутов до выката.
 """
@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 try:
-    import processor.main as pm
+    import nlp_processor.main as pm
     _IMPORT_OK = True
     _IMPORT_ERR = None
 except Exception as _e:  # pragma: no cover - тяжёлые зависимости отсутствуют
@@ -25,13 +25,13 @@ except Exception as _e:  # pragma: no cover - тяжёлые зависимос�
     _IMPORT_ERR = repr(_e)
 
 pytestmark = pytest.mark.skipif(
-    not _IMPORT_OK, reason=f"processor.main import unavailable: {_IMPORT_ERR}"
+    not _IMPORT_OK, reason=f"nlp_processor.main import unavailable: {_IMPORT_ERR}"
 )
 
 
-def _bare_bot() -> "pm.ProcessorBot":
-    """ProcessorBot без __init__ — только то, что нужно run()."""
-    bot = object.__new__(pm.ProcessorBot)
+def _bare_bot() -> "pm.NlpProcessorBot":
+    """NlpProcessorBot без __init__ — только то, что нужно run()."""
+    bot = object.__new__(pm.NlpProcessorBot)
     bot._running = True
     bot._shutdown_event = asyncio.Event()
     bot._shutdown_started = False
@@ -92,7 +92,7 @@ class TestCircuitBreakerGauge:
             await asyncio.wait_for(bot.run(), timeout=10)
 
         assert len(sleeps) >= 2
-        value = REGISTRY.get_sample_value("processor_circuit_breaker_state")
+        value = REGISTRY.get_sample_value("nlp_processor_circuit_breaker_state")
         assert value == 0.0  # CircuitState.CLOSED
 
     @pytest.mark.asyncio
@@ -109,5 +109,5 @@ class TestCircuitBreakerGauge:
             mp.setattr(asyncio, "sleep", fast_sleep)
             await asyncio.wait_for(bot.run(), timeout=10)
 
-        value = REGISTRY.get_sample_value("processor_circuit_breaker_state")
+        value = REGISTRY.get_sample_value("nlp_processor_circuit_breaker_state")
         assert value == 2.0

@@ -10,45 +10,45 @@ ROOT = Path(__file__).resolve().parent.parent
 def _load_geo_matcher():
     """Загрузка geo_matcher с относительными импортами через стабы пакета.
 
-    Если настоящий processor.morphology уже импортирован другим тестом —
+    Если настоящий nlp_processor.morphology уже импортирован другим тестом —
     импортируем настоящий geo_matcher напрямую: подмена morph.Lemma = object
     на живом модуле глобально ломала Lemma(...) в последующих тестах
     (порядкозависимые TypeError: object() takes no parameters).
 
     Тяжёлые зависимости (pymorphy3 и т.п.) не нужны — Tier-2 функции тестируем
     изолированно; morphology/phonetic_index подставляются стабами (fallback,
-    когда processor ещё не импортирован и стабы безопасны). После загрузки
+    когда nlp_processor ещё не импортирован и стабы безопасны). После загрузки
     sys.modules восстанавливается, чтобы не задеть другие тесты.
     """
-    if "processor.morphology" in sys.modules:
+    if "nlp_processor.morphology" in sys.modules:
         try:
-            import processor.geo_matcher as real_mod
+            import nlp_processor.geo_matcher as real_mod
             return real_mod
         except ImportError:
             pass  # тяжёлые зависимости недоступны — стаб-путь ниже
 
-    names = ("processor", "processor.morphology", "processor.phonetic_index",
-             "processor.word_tokenizer", "processor.geo_matcher")
+    names = ("nlp_processor", "nlp_processor.morphology", "nlp_processor.phonetic_index",
+             "nlp_processor.word_tokenizer", "nlp_processor.geo_matcher")
     saved = {n: sys.modules.get(n) for n in names}
 
-    pkg = types.ModuleType("processor")
-    pkg.__path__ = [str(ROOT / "processor")]
-    sys.modules.setdefault("processor", pkg)
-    for name in ("processor.morphology", "processor.phonetic_index",
-                 "processor.word_tokenizer"):
+    pkg = types.ModuleType("nlp_processor")
+    pkg.__path__ = [str(ROOT / "nlp_processor")]
+    sys.modules.setdefault("nlp_processor", pkg)
+    for name in ("nlp_processor.morphology", "nlp_processor.phonetic_index",
+                 "nlp_processor.word_tokenizer"):
         sys.modules.setdefault(name, types.ModuleType(name))
-    morph = sys.modules["processor.morphology"]
+    morph = sys.modules["nlp_processor.morphology"]
     morph.Lemma = object
     morph.Morphology = object
-    idxmod = sys.modules["processor.phonetic_index"]
+    idxmod = sys.modules["nlp_processor.phonetic_index"]
     idxmod.PhoneticIndex = object
-    wtmod = sys.modules["processor.word_tokenizer"]
+    wtmod = sys.modules["nlp_processor.word_tokenizer"]
     wtmod.Token = _load_token()
 
     spec = importlib.util.spec_from_file_location(
-        "processor.geo_matcher", ROOT / "processor" / "geo_matcher.py")
+        "nlp_processor.geo_matcher", ROOT / "nlp_processor" / "geo_matcher.py")
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["processor.geo_matcher"] = mod
+    sys.modules["nlp_processor.geo_matcher"] = mod
     spec.loader.exec_module(mod)
 
     for name, prev in saved.items():
@@ -61,7 +61,7 @@ def _load_geo_matcher():
 
 def _load_token():
     spec = importlib.util.spec_from_file_location(
-        "_tok_under_test", ROOT / "processor" / "word_tokenizer.py")
+        "_tok_under_test", ROOT / "nlp_processor" / "word_tokenizer.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules["_tok_under_test"] = mod
     spec.loader.exec_module(mod)

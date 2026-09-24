@@ -1,7 +1,7 @@
 """Monitoring — парсер Telegram каналов.
 
 Клиент kurigram получает сообщения, предобрабатывает текст и записывает
-в pending_events. NLP-пайплайн и вставка в events — в контейнере processor.
+в pending_events. NLP-пайплайн и вставка в events — в контейнере nlp_processor.
 """
 
 import asyncio

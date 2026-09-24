@@ -306,7 +306,7 @@ class WebSocketManager:
         
         Accepts either:
           - Full GeoJSON Feature (type: 'Feature', properties, geometry)
-          - Minimal notification from processor: {"id": N, "layer": "...", "strategy": "..."}
+          - Minimal notification from nlp_processor: {"id": N, "layer": "...", "strategy": "..."}
             (R-DB0: pg_notify sends minimal payloads; core fetches full data from DB)
         """
         if not self.connections:
@@ -320,7 +320,7 @@ class WebSocketManager:
                 return
             event_data = features[0]
 
-        # R-DB0: Minimal notification from processor — fetch full Feature from DB
+        # R-DB0: Minimal notification from nlp_processor — fetch full Feature from DB
         if event_data.get('type') != 'Feature':
             event_id = event_data.get('id')
             if event_id and hasattr(self, 'db_request') and self.db_request:

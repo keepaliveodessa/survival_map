@@ -95,7 +95,7 @@
     {
       "id": 4,
       "type": "logs",
-      "title": "Только ошибки (core / parser / processor)",
+      "title": "Только ошибки (core / parser / nlp_processor)",
       "description": "Фильтр по уровню error|critical — детальный разбор инцидентов",
       "datasource": { "type": "loki", "uid": "loki" },
       "gridPos": { "h": 14, "w": 24, "x": 0, "y": 24 },

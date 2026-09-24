@@ -1,6 +1,6 @@
 [bandit]
 # Exclude test files, docs, postgres SQL scripts, and model binaries
-exclude_dirs = tests,docs,postgres,processor/models,scripts,/web/node_modules
+exclude_dirs = tests,docs,postgres,nlp_processor/models,scripts,/web/node_modules
 # Skip rules that produce false positives or are acceptable in this codebase:
 # B101 — assert used in tests (tests are excluded, but some scripts use assert)
 # B404 — import subprocess (used in standalone scripts, not deployed)

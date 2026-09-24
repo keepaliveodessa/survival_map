@@ -117,7 +117,7 @@ bandit-scan:
     - pip install --quiet bandit==1.7.10
   script:
     # G-15: No api_id/api_hash — scan for hardcoded secrets
-    - bandit -r core/ processor/ parser/ -ll --skip B608 -x '*/tests/*,scripts,processor/models'
+    - bandit -r core/ nlp_processor/ parser/ -ll --skip B608 -x '*/tests/*,scripts,nlp_processor/models'
     - bandit -ll core/utils/validators.py
   rules:
     - if: '$CI_COMMIT_BRANCH'
@@ -131,7 +131,7 @@ pip-audit:
     - pip install --quiet pip-audit==2.7.3
   script:
     - pip-audit -r requirements.txt
-    - pip-audit -r processor/requirements.txt
+    - pip-audit -r nlp_processor/requirements.txt
     - pip-audit -r parser/requirements.txt
     - pip-audit -r requirements-dev.txt
   rules:
@@ -142,7 +142,7 @@ hadolint:
   image: hadolint/hadolint:v2.12.0-alpine
   script:
     - hadolint --failure-threshold error Dockerfile.core
-    - hadolint --failure-threshold error Dockerfile.processor
+    - hadolint --failure-threshold error Dockerfile.nlp_processor
     - hadolint --failure-threshold error Dockerfile.parser
     - hadolint --failure-threshold error Dockerfile.web
     - hadolint --failure-threshold error Dockerfile.postgres
@@ -191,7 +191,7 @@ backend-tests:
   cache:
     <<: *pip-cache
   before_script:
-    - pip install -q -r requirements.txt -r parser/requirements.txt -r processor/requirements.txt -r requirements-dev.txt
+    - pip install -q -r requirements.txt -r parser/requirements.txt -r nlp_processor/requirements.txt -r requirements-dev.txt
   script:
     - pytest -q --junitxml=report.xml
   artifacts:
@@ -224,7 +224,7 @@ integration-tests:
     <<: *pip-cache
   before_script:
     - apt-get update -qq && apt-get install -y -qq postgresql-client > /dev/null 2>&1
-    - pip install -q -r requirements.txt -r parser/requirements.txt -r processor/requirements.txt -r requirements-dev.txt
+    - pip install -q -r requirements.txt -r parser/requirements.txt -r nlp_processor/requirements.txt -r requirements-dev.txt
   script:
     - |
       for i in $(seq 1 30); do
@@ -243,7 +243,7 @@ parser-length-filter:
   cache:
     <<: *pip-cache
   before_script:
-    - pip install -q -r requirements.txt -r parser/requirements.txt -r processor/requirements.txt -r requirements-dev.txt
+    - pip install -q -r requirements.txt -r parser/requirements.txt -r nlp_processor/requirements.txt -r requirements-dev.txt
   script:
     - pytest tests/test_parser_length_filter.py -v
   rules:
@@ -312,7 +312,7 @@ common-invariant:
   image: python:3.11-slim-bookworm
   script:
     - |
-      grep -rn "^[[:space:]]*from core\b\|^[[:space:]]*from parser\b\|^[[:space:]]*from processor\b\|^[[:space:]]*import core\b\|^[[:space:]]*import parser\b\|^[[:space:]]*import processor\b" common/ && exit 1 || echo "OK: common/ does not import service packages"
+      grep -rn "^[[:space:]]*from core\b\|^[[:space:]]*from parser\b\|^[[:space:]]*from nlp_processor\b\|^[[:space:]]*import core\b\|^[[:space:]]*import parser\b\|^[[:space:]]*import nlp_processor\b" common/ && exit 1 || echo "OK: common/ does not import service packages"
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -383,10 +383,10 @@ build:parser:
   needs:
     - backend-tests
 
-build:processor:
+build:nlp_processor:
   <<: *build-template
   variables:
-    SERVICE: processor
+    SERVICE: nlp_processor
   needs:
     - backend-tests
 
@@ -430,13 +430,13 @@ trivy-scan:
   script:
     - trivy image --severity HIGH,CRITICAL --exit-code 1 $CI_REGISTRY_IMAGE/core:$CI_COMMIT_SHA
     - trivy image --severity HIGH,CRITICAL --exit-code 1 $CI_REGISTRY_IMAGE/parser:$CI_COMMIT_SHA
-    - trivy image --severity HIGH,CRITICAL --exit-code 1 $CI_REGISTRY_IMAGE/processor:$CI_COMMIT_SHA
+    - trivy image --severity HIGH,CRITICAL --exit-code 1 $CI_REGISTRY_IMAGE/nlp_processor:$CI_COMMIT_SHA
     - trivy image --severity HIGH,CRITICAL --exit-code 1 $CI_REGISTRY_IMAGE/web:$CI_COMMIT_SHA
     - trivy image --severity HIGH,CRITICAL --exit-code 1 $CI_REGISTRY_IMAGE/postgres:$CI_COMMIT_SHA
   needs:
     - build:core
     - build:parser
-    - build:processor
+    - build:nlp_processor
     - build:web
     - build:postgres
   rules:
@@ -461,7 +461,7 @@ deploy:
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - docker pull $CI_REGISTRY_IMAGE/core:latest
     - docker pull $CI_REGISTRY_IMAGE/parser:latest
-    - docker pull $CI_REGISTRY_IMAGE/processor:latest
+    - docker pull $CI_REGISTRY_IMAGE/nlp_processor:latest
     - docker pull $CI_REGISTRY_IMAGE/web:latest
     - docker pull $CI_REGISTRY_IMAGE/postgres:latest
   script:

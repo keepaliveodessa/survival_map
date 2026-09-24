@@ -1,5 +1,5 @@
 -- 10-pending-events.sql
--- Очередь сообщений для processor: парсер пишет, процессор читает (SKIP LOCKED).
+-- Очередь сообщений для nlp_processor: парсер пишет, процессор читает (SKIP LOCKED).
 
 CREATE TABLE IF NOT EXISTS pending_events (
     id BIGSERIAL PRIMARY KEY,

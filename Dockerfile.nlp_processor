@@ -1,4 +1,4 @@
-# Dockerfile.processor — NLP processor service (pymorphy3 + rapidfuzz + PostGIS)
+# Dockerfile.nlp_processor — NLP processor service (pymorphy3 + rapidfuzz + PostGIS)
 # Multi-stage build для минимизации размера образа
 
 # =============================================================================
@@ -8,11 +8,11 @@ FROM python:3.11.14-slim-bookworm AS builder
 
 WORKDIR /build
 
-RUN --mount=type=cache,target=/var/cache/apt,id=processor-apt \
+RUN --mount=type=cache,target=/var/cache/apt,id=nlp_processor-apt \
     apt-get update && apt-get install -y --no-install-recommends gcc \
     && rm -rf /var/lib/apt/lists/*
 
-COPY processor/requirements.txt .
+COPY nlp_processor/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --user --no-cache-dir -r requirements.txt && \
     find /root/.local -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
@@ -38,22 +38,22 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED="1"
 ENV PYTHONDONTWRITEBYTECODE="1"
-ENV PATH="/home/processor/.local/bin:$PATH"
+ENV PATH="/home/nlp_processor/.local/bin:$PATH"
 
-COPY --from=builder --chown=processor:processor /root/.local /home/processor/.local
+COPY --from=builder --chown=nlp_processor:nlp_processor /root/.local /home/nlp_processor/.local
 
-RUN --mount=type=cache,target=/var/cache/apt,id=processor-runtime \
+RUN --mount=type=cache,target=/var/cache/apt,id=nlp_processor-runtime \
     apt-get update && apt-get install -y --no-install-recommends curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -u 1000 processor && \
+RUN useradd -m -u 1000 nlp_processor && \
     chmod 1777 /tmp && \
-    chown -R processor:processor /app
+    chown -R nlp_processor:nlp_processor /app
 
-COPY --chown=processor:processor processor/ ./processor/
-COPY --chown=processor:processor common/ ./common/
+COPY --chown=nlp_processor:nlp_processor nlp_processor/ ./nlp_processor/
+COPY --chown=nlp_processor:nlp_processor common/ ./common/
 
-USER processor
+USER nlp_processor
 
-CMD ["python", "-m", "processor.main"]
+CMD ["python", "-m", "nlp_processor.main"]

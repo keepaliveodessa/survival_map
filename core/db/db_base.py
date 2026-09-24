@@ -54,7 +54,7 @@ async def create_pool(
     server_settings: Optional[Dict] = None,
     **kwargs: Any,
 ) -> asyncpg.Pool:
-    """Единая фабрика asyncpg-пула для Database (core) и DBAdapter (parser/processor).
+    """Единая фабрика asyncpg-пула для Database (core) и DBAdapter (parser/nlp_processor).
 
     Раньше два класса дублировали создание пула (kwargs в db_base vs DSN-строка
     в db_adapter). Теперь создание и параметры по умолчанию — в одном месте:

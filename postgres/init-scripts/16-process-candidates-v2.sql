@@ -76,7 +76,7 @@ BEGIN
     -- пересекается со всем подряд и ломает выбор главной линии.
     -- Правило: district отфильтровывает кандидатов вне своего полигона,
     -- сам исключается из кандидатов. Если district был ЕДИНСТВЕННЫМ
-    -- кандидатом — random_null (processor сам вставит random-точку).
+    -- кандидатом — random_null (nlp_processor сам вставит random-точку).
     WITH d AS (
         SELECT s.id, ST_MakeValid(s.geom) AS d_geom
         FROM geo s
@@ -110,7 +110,7 @@ BEGIN
     FROM kept_ids ki LEFT JOIN district_pick dp ON TRUE;
 
     -- District был единственным кандидатом (или все кандидаты вне района):
-    -- geometry нет — random_null, processor сгенерирует random-точку (R-PR22).
+    -- geometry нет — random_null, nlp_processor сгенерирует random-точку (R-PR22).
     IF v_kept_ids IS NULL OR array_length(v_kept_ids, 1) = 0 THEN
         RETURN QUERY SELECT 'random_null'::TEXT, NULL::GEOMETRY, '[]'::JSONB,
             0.0::DOUBLE PRECISION,

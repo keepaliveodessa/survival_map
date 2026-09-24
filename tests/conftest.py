@@ -84,7 +84,7 @@ def load_module_by_path(name: str, relpath: str):
     """Import a single module file directly, bypassing its package __init__.
 
     Needed for self-contained submodules (core/text_preprocessor,
-    processor/word_tokenizer), которые тестируются без тяжёлых зависимостей,
+    nlp_processor/word_tokenizer), которые тестируются без тяжёлых зависимостей,
     подтягиваемых их пакетами (asyncpg/rapidfuzz/pymorphy3).
     """
     path = ROOT / relpath

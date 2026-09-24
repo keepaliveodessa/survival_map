@@ -1,4 +1,4 @@
-"""HTTP healthcheck сервер для processor."""
+"""HTTP healthcheck сервер для nlp_processor."""
 
 import logging
 import resource
@@ -7,11 +7,11 @@ from datetime import datetime, timezone
 from aiohttp import web
 
 from common.metrics import (  # noqa: F401 — регистрация в REGISTRY при импорте
-    processor_messages_processed_total,
-    processor_messages_errors_total,
-    processor_messages_expired_total,
-    processor_worker_active,
-    processor_circuit_breaker_state,
+    nlp_processor_messages_processed_total,
+    nlp_processor_messages_errors_total,
+    nlp_processor_messages_expired_total,
+    nlp_processor_worker_active,
+    nlp_processor_circuit_breaker_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ class HealthServer:
         return web.Response(text="OK")
 
     async def handle_metrics(self, request):
-        """Экспорт Prometheus-метрик processor (скрейп prometheus'ом).
+        """Экспорт Prometheus-метрик nlp_processor (скрейп prometheus'ом).
 
         Порт 8765 торчит только в docker-сети (expose, не ports) —
         наружу метрики не уходят, аналогично /metrics у core.

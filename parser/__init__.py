@@ -3,7 +3,7 @@
 __version__ = '5.0.0'
 __author__ = 'Survival Map Team'
 
-# DBAdapter общий для parser/processor (живёт в core/). Импорт тянет цепочку
+# DBAdapter общий для parser/nlp_processor (живёт в core/). Импорт тянет цепочку
 # core.db.dbconnect → asyncpg — в контейнере parser asyncpg установлен
 # (parser/requirements.txt), так что это безопасно.
 from common.db_adapter import DBAdapter

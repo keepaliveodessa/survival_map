@@ -1,7 +1,7 @@
 """Reusable PostgreSQL LISTEN/NOTIFY listener with auto-reconnect.
 
 Eliminates the duplicated connection-acquire → listen → keep-alive →
-backoff → cleanup pattern across app_factory, parser, and processor.
+backoff → cleanup pattern across app_factory, parser, and nlp_processor.
 
 Usage:
     listener = PgNotifyListener(

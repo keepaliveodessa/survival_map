@@ -1,5 +1,5 @@
 # Docker Compose - Survival Map v3
-# Architecture: Parser (kurigram) → Processor (NLP) → PostgreSQL → Core (API)
+# Architecture: Parser (kurigram) → NLP Processor → PostgreSQL → Core (API)
 
 # Shared logging config — json-file с ротацией (max 50MB на сервис: 5×10MB).
 # Без этого docker накапливает логи без ограничений и съедает диск.
@@ -145,10 +145,10 @@ services:
   # NLP Processor - NLP pipeline (pymorphy3 + rapidfuzz + PostGIS)
   # =============================================================================
   nlp_processor:
-    image: survival_processor:latest
+    image: survival_nlp_processor:latest
     build:
       context: .
-      dockerfile: Dockerfile.processor
+      dockerfile: Dockerfile.nlp_processor
       network: host
     container_name: nlp_processor
     stop_grace_period: 30s

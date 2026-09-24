@@ -18,27 +18,27 @@ def _file_text(path: str) -> str:
 
 class TestProcessorEventTimeValidation:
     def test_fetch_pending_has_event_time_window(self):
-        text = _file_text("processor/main.py")
+        text = _file_text("nlp_processor/main.py")
         assert "event_time >= now() - interval '60 minutes'" in text
         assert "event_time <= now() + interval '5 minutes'" in text
 
     def test_process_row_has_expired_guard(self):
-        text = _file_text("processor/main.py")
+        text = _file_text("nlp_processor/main.py")
         assert "outside 60-min window — mark expired" in text
 
     def test_expired_guard_calls_mark_expired(self):
-        text = _file_text("processor/main.py")
+        text = _file_text("nlp_processor/main.py")
         assert "outside 60-min window — mark expired" in text
         assert "await self._mark_expired(row['id'])" in text
         assert "self._expired += 1" in text
 
     def test_mark_expired_exists(self):
-        text = _file_text("processor/main.py")
+        text = _file_text("nlp_processor/main.py")
         assert "async def _mark_expired" in text
         assert "SET status = 'expired'" in text
 
     def test_expired_counter_initialized_and_logged(self):
-        text = _file_text("processor/main.py")
+        text = _file_text("nlp_processor/main.py")
         assert "self._expired = 0" in text
         assert "_expired" in text
 
@@ -149,7 +149,7 @@ class TestDocsChecks:
             "docs/RULES.md",
             "docs/RULES_CORE.md",
             "docs/RULES_PARSER.md",
-            "docs/RULES_PROCESSOR.md",
+            "docs/RULES_NLP_PROCESSOR.md",
             "docs/RULES_POSTGRES.md",
         ]:
             text = _file_text(path)
@@ -211,7 +211,7 @@ class TestDistrictCandidateRule:
 
     def test_v2_district_only_returns_random_null(self):
         text = _file_text("postgres/init-scripts/16-process-candidates-v2.sql")
-        # district единственный кандидат → random_null (processor вставит random)
+        # district единственный кандидат → random_null (nlp_processor вставит random)
         assert "district_only" in text
 
     def test_v1_keeps_same_district_contract(self):

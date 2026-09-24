@@ -28,7 +28,7 @@ HTTP-эндпоинты, поток событий), а также послед�
 |---|---|
 | `GET /health/ready` | ✅ 200, `database: healthy`, `bot: healthy`, v1.0.6 |
 | `GET /health/detailed` | ✅ pool 2/10, memory-cache healthy |
-| Поток данных | ✅ **65 features** за 60 мин, все 4 слоя (`pig/cops/bus/traffic`) — полный конвейер parser→processor→PostGIS→API работает |
+| Поток данных | ✅ **65 features** за 60 мин, все 4 слоя (`pig/cops/bus/traffic`) — полный конвейер parser→nlp_processor→PostGIS→API работает |
 | WebSocket | ✅ handshake `101 Switching Protocols` |
 | `/api/geo` × 8 | ✅ 5–12 ms, стабильное кэширование |
 | App-level rate limit (30 rapid POST /api/events) | ✅ упирается в 429 |
@@ -158,7 +158,7 @@ promtail.yml) — **каталога нет в репо** и нет в git-ис�
 Конфигурация джобы исправлена (`entrypoint: [""]` против `unknown command "sh"`,
 `TRIVY_USERNAME/PASSWORD` для pull из приватного CI_REGISTRY) и джоба **реально
 сканирует**: 28 сек до первого fail при последовательном скане
-core→parser→processor→web→postgres — первый же образ с HIGH/CRITICAL останавливает
+core→parser→nlp_processor→web→postgres — первый же образ с HIGH/CRITICAL останавливает
 джобу через `--exit-code 1` (так и задумано). Лог джобы недоступен текущему
 токену (нет гранулярного `Job: Read` / `Job Artifact: Read`), поэтому конкретные
 CVE требуют triage: обновление базовых образов либо обоснованный `.trivyignore`.
@@ -181,7 +181,7 @@ CVE требуют triage: обновление базовых образов л
 - **Мёртвые env-переменные в `.env`:** `ENTITY_SIMILARITY_THRESHOLD`,
   `GEO_CANDIDATE_MIN_SCORE`, `GEO_INTERSECTION_BUFFER_M`,
   `GEO_WEIGHTED_CENTROID_MAX_SCATTER_M`, `GEO_ENABLE_POS_FILTER` — не читаются
-  ни одним модулем (проверено grep по core/parser/processor/common). Комментарий
+  ни одним модулем (проверено grep по core/parser/nlp_processor/common). Комментарий
   в `.env.example` про ENTITY_SIMILARITY_THRESHOLD тоже устарел: калибровка
   переехала в хардкодные dataclass-дефолты `common/settings.py`.
 - **Дубли ключей в `.env`:** `JWT_SECRET` и `GEO_CANDIDATE_MIN_SCORE` встречаются
@@ -199,7 +199,7 @@ CVE требуют triage: обновление базовых образов л
 - `settings.layers` отдаются целиком на `POST /api/config` без аутентификации в
   dev-bypass — при включённой валидации эндпоинт закрыт JWT (не входит в
   PUBLIC_ENDPOINTS), ок.
-- `processor/health.py` отдаёт `/health/ready` на 8765 — контейнер-локально,
+- `nlp_processor/health.py` отдаёт `/health/ready` на 8765 — контейнер-локально,
   наружу не торчит, ок.
 - Пайплайн #96 (`8b44a8b`): 21 success, trivy-scan failed (M-6), deploy skipped
   (зависим от image-security). Матрица secure-by-default (G-11) снова зелёная в CI.

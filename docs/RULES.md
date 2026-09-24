@@ -60,13 +60,13 @@ inline-`os.getenv`/`env.bool` для auth-флагов за пределами `
 
 ### G-17: common/ не зависит от сервисов
 
-`common/` не должен импортировать никакие сервисные пакеты (`core`, `parser`, `processor`).
+`common/` не должен импортировать никакие сервисные пакеты (`core`, `parser`, `nlp_processor`).
 Сервисы могут импортировать `common/`, но не могут импортировать друг друга.
 
 ### G-14: NLP-словари и зависимости — только в образе
 
 Все NLP-словари (pymorphy3, snowballstemmer) и зависимости устанавливаются ОДИН РАЗ
-при сборке Dockerfile.processor (через pip/apt на этапе builder). В рантайме ничего
+при сборке Dockerfile.nlp_processor (через pip/apt на этапе builder). В рантайме ничего
 не скачивается.
 
 Запрещено:
@@ -83,7 +83,7 @@ inline-`os.getenv`/`env.bool` для auth-флагов за пределами `
 
 ```
 Telegram (MTProto) → parser (kurigram + strip_tail + preprocess_light) → pending_events
-    → processor (tokenize → lemmatize → classify → find_geo → process_candidates_v2)
+    → nlp_processor (tokenize → lemmatize → classify → find_geo → process_candidates_v2)
     → postgres (PostGIS, pg_notify, LISTEN/NOTIFY)
     → core (aiohttp REST + WebSocket + aiogram bot)
     → web (nginx + Leaflet/MapLibre GL, PWA)
@@ -100,7 +100,7 @@ Telegram (MTProto) → parser (kurigram + strip_tail + preprocess_light) → pen
 |--------|-------------|-------------|------|
 | **postgres** | [RULES_POSTGRES.md](RULES_POSTGRES.md) | `postgres -c config_file=...` | 5432 (internal) |
 | **parser** | [RULES_PARSER.md](RULES_PARSER.md) | `python -m parser.monitoring` | heartbeat only |
-| **processor** | [RULES_PROCESSOR.md](RULES_PROCESSOR.md) | `python -m processor.main` | heartbeat only |
+| **nlp_processor** | [RULES_NLP_PROCESSOR.md](RULES_NLP_PROCESSOR.md) | `python -m nlp_processor.main` | heartbeat only |
 | **core** | [RULES_CORE.md](RULES_CORE.md) | `python main.py` | 8080 (internal) |
 | **web** | [RULES_WEB.md](RULES_WEB.md) | nginx | **80 (external)** |
 

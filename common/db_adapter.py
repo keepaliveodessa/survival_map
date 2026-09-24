@@ -1,8 +1,8 @@
 """DBAdapter — единый адаптер подключения к PostgreSQL.
 
-Раньше parser/db_adapter.py и processor/db_adapter.py были почти побайтово
+Раньше parser/db_adapter.py и nlp_processor/db_adapter.py были почти побайтово
 одинаковыми классами. Теперь один класс живёт в core/, а оба сервиса
-импортируют его (контейнеры parser/processor копируют core/ в образ).
+импортируют его (контейнеры parser/nlp_processor копируют core/ в образ).
 
 Схема подключения идентична обеим старым версиям:
   - параметры пула из централизованного settings.db;
@@ -11,7 +11,7 @@
   - проверка соединения SELECT 1 после создания пула.
 
 `ensure_schema` — parser-specific (исторические миграции events), для
-processor не вызывается, но безвреден в общем классе.
+nlp_processor не вызывается, но безвреден в общем классе.
 """
 
 import logging

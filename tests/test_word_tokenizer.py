@@ -1,7 +1,7 @@
-"""Tests for processor/word_tokenizer.tokenize (pure, no heavy deps)."""
+"""Tests for nlp_processor/word_tokenizer.tokenize (pure, no heavy deps)."""
 from conftest import load_module_by_path
 
-wt = load_module_by_path("_wt_under_test", "processor/word_tokenizer.py")
+wt = load_module_by_path("_wt_under_test", "nlp_processor/word_tokenizer.py")
 tokenize = wt.tokenize
 
 

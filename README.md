@@ -24,7 +24,7 @@ Telegram Mini App — интерактивная карта событий Од�
 |-------------|-------------------------------------------------------------------|----------------|
 | `postgres`  | PostgreSQL + PostGIS: объекты (справочник), события с геометрией, очередь | —              |
 | `parser`    | kurigram-клиент: канал → предобработка → `pending_events` (очередь)  | —              |
-| `processor` | NLP-пайплайн: токенизация → лемматизация → классификация → geo → `events` | —              |
+| `nlp_processor` | NLP-пайплайн: токенизация → лемматизация → классификация → geo → `events` | —              |
 | `core`      | aiohttp: REST + WebSocket, JWT-валидация Telegram, `LISTEN events` | —              |
 | `web`       | reverse-proxy + статика фронтенда (собирается в образе)            | **80**         |
 
@@ -34,7 +34,7 @@ web:80.
 ## Поток данных
 
 ```
-Telegram-канал → parser → pending_events (очередь) → processor (NLP/geo)
+Telegram-канал → parser → pending_events (очередь) → nlp_processor (NLP/geo)
    → PostgreSQL (PostGIS) → pg_notify → core (LISTEN → WebSocket) → web → карта
 ```
 
@@ -46,8 +46,8 @@ Telegram-канал → parser → pending_events (очередь) → processor
 </p>
 
 <p align="center">
-  <img src="assets/processor.gif" alt="Processor — NLP → гео → events" width="600"/>
-  <br/><em>Processor — NLP-пайплайн: токенизация → лемматизация → классификация → геолокация</em>
+  <img src="assets/nlp_processor.gif" alt="NLP Processor — NLP → гео → events" width="600"/>
+  <br/><em>NLP Processor — пайплайн: токенизация → лемматизация → классификация → геолокация</em>
 </p>
 
 <p align="center">
@@ -248,15 +248,15 @@ docker compose --profile monitoring up -d
 
 Автоматически провижинятся datasource (Prometheus, Loki) и три дашборда
 (папка "Survival Map"): **Overview** — health сервисов, конвейер
-parser→processor, HTTP core, TPS/кэш PostgreSQL; **Containers** — CPU/RAM/сеть/disk
+parser→nlp_processor, HTTP core, TPS/кэш PostgreSQL; **Containers** — CPU/RAM/сеть/disk
 по контейнерам (cAdvisor); **Logs** — объём логов, ошибки, живой поток (Loki:
 лейбл `service` — имя compose-сервиса, ошибки фильтруются по `detected_level`).
 Логи контейнеров собирает promtail через docker.sock.
 
 Ключевые метрики конвейера: `parser_queue_size` (рост к 60/65 = backpressure),
-`processor_messages_errors_total` (перманентные ошибки NLP),
-`processor_circuit_breaker_state > 0` (деградация БД),
-`rate(processor_messages_processed_total[5m])` (события/сек).
+`nlp_processor_messages_errors_total` (перманентные ошибки NLP),
+`nlp_processor_circuit_breaker_state > 0` (деградация БД),
+`rate(nlp_processor_messages_processed_total[5m])` (события/сек).
 
 Приложение-метрики экспортируются сервисами напрямую (без авторизации —
 порты доступны только внутри docker-сети: expose, не ports).
@@ -266,7 +266,7 @@ parser→processor, HTTP core, TPS/кэш PostgreSQL; **Containers** — CPU/RAM
 ```
 core/        backend сервиса `core` (aiohttp app, API, БД-адаптеры, settings)
 parser/      сервис `parser` (kurigram: канал → очередь pending_events)
-processor/   сервис `processor` (NLP: токенизация → лемматизация → geo → events)
+nlp_processor/   сервис `nlp_processor` (NLP: токенизация → лемматизация → geo → events)
 postgres/    init-скрипты схемы и данные (geo.csv, stopwords.csv)
 web/         фронтенд сервиса `web` (TypeScript + Leaflet/MapLibre, webpack)
 docs/        правила микросервисов (RULES_*.md)
@@ -278,7 +278,7 @@ docs/        правила микросервисов (RULES_*.md)
 
 - [docs/RULES_CORE.md](docs/RULES_CORE.md) — backend: REST + WebSocket API, JWT/Telegram, middleware, БД-адаптеры
 - [docs/RULES_PARSER.md](docs/RULES_PARSER.md) — алгоритм парсера (канал → очередь)
-- [docs/RULES_PROCESSOR.md](docs/RULES_PROCESSOR.md) — NLP-пайплайн (sliding-window, тиры матча, стратегии геометрии)
+- [docs/RULES_NLP_PROCESSOR.md](docs/RULES_NLP_PROCESSOR.md) — NLP-пайплайн (sliding-window, тиры матча, стратегии геометрии)
 - [docs/RULES_WEB.md](docs/RULES_WEB.md) — фронтенд + nginx (PWA, Leaflet/MapLibre, reverse-proxy)
 - [docs/RULES_POSTGRES.md](docs/RULES_POSTGRES.md) — схема PostGIS, справочник, TTL событий
 

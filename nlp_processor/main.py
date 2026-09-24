@@ -27,11 +27,11 @@ setup_logging(
 
 from common.db_adapter import DBAdapter
 from common.metrics import (
-    processor_messages_processed_total,
-    processor_messages_errors_total,
-    processor_messages_expired_total,
-    processor_worker_active,
-    processor_circuit_breaker_state,
+    nlp_processor_messages_processed_total,
+    nlp_processor_messages_errors_total,
+    nlp_processor_messages_expired_total,
+    nlp_processor_worker_active,
+    nlp_processor_circuit_breaker_state,
 )
 from .morphology import Morphology
 from .phonetic_index import PhoneticIndex
@@ -52,7 +52,7 @@ _STALE_PROCESSING_INTERVAL = timedelta(minutes=5)
 # Периодичность прогона очистителя зависших задач.
 _CLEANER_INTERVAL = 60.0
 
-# Маппинг CircuitState → числовое значение гейджа processor_circuit_breaker_state
+# Маппинг CircuitState → числовое значение гейджа nlp_processor_circuit_breaker_state
 # (0=closed 1=half_open 2=open): ненулевое значение удобно алертить как деградацию БД.
 _CIRCUIT_STATE_PROM = {
     CircuitState.CLOSED: 0,
@@ -129,8 +129,8 @@ _INSERT_EVENT_FROM_CANDIDATES = f"""
 """
 
 
-class ProcessorBot:
-    """NLP processor: потребляет pending_events, обрабатывает, пишет в events."""
+class NlpProcessorBot:
+    """NLP-обработчик: потребляет pending_events, обрабатывает, пишет в events."""
 
     def __init__(self):
         """Инициализация процессора: подсистемы NLP, БД, health-сервер."""
@@ -155,9 +155,9 @@ class ProcessorBot:
         self.layer_classifier = LayerClassifier(self.morph)
 
         self._worker_concurrency = max(
-            1, min(_MAX_WORKER_CONCURRENCY, settings.processor.worker_concurrency)
+            1, min(_MAX_WORKER_CONCURRENCY, settings.nlp_processor.worker_concurrency)
         )
-        self._poll_interval = settings.processor.poll_interval
+        self._poll_interval = settings.nlp_processor.poll_interval
 
         # asyncio.Event для корректного shutdown через signal handler.
         # Используется в _request_stop() — set() через call_soon_threadsafe
@@ -167,7 +167,7 @@ class ProcessorBot:
         # Circuit breaker для защиты БД
         self._circuit_breaker = CircuitBreaker(failure_threshold=5, timeout=60.0)
         # Prometheus: стартовое состояние защитной сетки (0 = closed).
-        processor_circuit_breaker_state.set(0)
+        nlp_processor_circuit_breaker_state.set(0)
 
     async def initialize(self) -> bool:
         """Инициализация всех компонентов: БД, NLP, подписки PG notify."""
@@ -176,10 +176,10 @@ class ProcessorBot:
                 return False
             if not await self._init_nlp():
                 return False
-            logger.info("✅ ProcessorBot initialized")
+            logger.info("✅ NlpProcessorBot initialized")
             return True
         except Exception as e:
-            logger.error(f"❌ Failed to initialize ProcessorBot: {e}")
+            logger.error(f"❌ Failed to initialize NlpProcessorBot: {e}")
             return False
 
     async def _init_database(self) -> bool:
@@ -293,7 +293,7 @@ class ProcessorBot:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, self._request_stop)
 
-        logger.info("🚀 Starting processor...")
+        logger.info("🚀 Starting nlp_processor...")
 
         try:
             await self.health_server.start(port=8765)
@@ -321,8 +321,8 @@ class ProcessorBot:
                 self.health_server._memory_warning_sent = False
             # R-PR2: не даём _worker_tasks расти при рестартах воркеров.
             self._worker_tasks = [t for t in self._worker_tasks if not t.done()]
-            processor_worker_active.set(len(self._worker_tasks))
-            processor_circuit_breaker_state.set(
+            nlp_processor_worker_active.set(len(self._worker_tasks))
+            nlp_processor_circuit_breaker_state.set(
                 _CIRCUIT_STATE_PROM[self._circuit_breaker.state]
             )
             self._write_heartbeat(self)
@@ -382,7 +382,7 @@ class ProcessorBot:
                 # Защитная сетка: неучтённая ошибка → задача снова доступна
                 # для других воркеров сразу, не дожидаясь очистителя.
                 self._errors += 1
-                processor_messages_errors_total.inc()
+                nlp_processor_messages_errors_total.inc()
                 logger.error(
                     f"Worker {worker_id}: message {row['message_id']} "
                     f"crashed with unhandled error: {e} — requeueing"
@@ -407,7 +407,7 @@ class ProcessorBot:
             if result:
                 await self._mark_done(row['id'])
                 self._messages_processed += 1
-                processor_messages_processed_total.inc()
+                nlp_processor_messages_processed_total.inc()
                 logger.info(
                     f"✅ Message {msg_id} processed: "
                     f"event_id={result['event_id']}, layer={result['layer']}, "
@@ -427,7 +427,7 @@ class ProcessorBot:
             )
         except Exception as e:
             self._errors += 1
-            processor_messages_errors_total.inc()
+            nlp_processor_messages_errors_total.inc()
             await self._mark_error(row['id'], str(e))
             logger.error(f"Message {msg_id}: failed permanently: {e}")
 
@@ -554,7 +554,7 @@ class ProcessorBot:
             logger.warning("msg %s: event_time %s outside 60-min window — mark expired", message_id, event_time)
             await self._mark_expired(row['id'])
             self._expired += 1
-            processor_messages_expired_total.inc()
+            nlp_processor_messages_expired_total.inc()
             return None
 
         tokens = tokenize(raw_text)
@@ -790,12 +790,12 @@ class ProcessorBot:
             return -1
 
     @staticmethod
-    def _write_heartbeat(processor: 'ProcessorBot'):
-        """Записать enriched heartbeat в /tmp/processor_heartbeat."""
+    def _write_heartbeat(nlp_processor: 'NlpProcessorBot'):
+        """Записать enriched heartbeat в /tmp/nlp_processor_heartbeat."""
         try:
-            rss_mb = processor.get_rss_mb()
-            lru_size = processor.morph.cache_size() if hasattr(processor.morph, 'cache_size') else -1
-            with open('/tmp/processor_heartbeat', 'w') as f:  # nosec B108 — container /tmp, Docker healthcheck
+            rss_mb = nlp_processor.get_rss_mb()
+            lru_size = nlp_processor.morph.cache_size() if hasattr(nlp_processor.morph, 'cache_size') else -1
+            with open('/tmp/nlp_processor_heartbeat', 'w') as f:  # nosec B108 — container /tmp, Docker healthcheck
                 f.write(json_lib.dumps({
                     'timestamp': int(datetime.now(timezone.utc).timestamp()),
                     'rss_mb': round(rss_mb, 1),
@@ -810,7 +810,7 @@ class ProcessorBot:
             return
         self._shutdown_started = True
 
-        logger.info("Shutting down processor...")
+        logger.info("Shutting down nlp_processor...")
         self._running = False
 
         tasks = [t for t in self._worker_tasks if t and not t.done()]
@@ -843,21 +843,21 @@ class ProcessorBot:
 
 
 async def main():
-    """Точка входа: создание, инициализация и запуск ProcessorBot."""
-    processor = ProcessorBot()
+    """Точка входа: создание, инициализация и запуск NlpProcessorBot."""
+    nlp_processor = NlpProcessorBot()
     try:
-        success = await processor.initialize()
+        success = await nlp_processor.initialize()
         if not success:
             logger.error("Failed to initialize, exiting")
             sys.exit(1)
-        await processor.run()
+        await nlp_processor.run()
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         sys.exit(1)
     finally:
-        await processor.shutdown()
+        await nlp_processor.shutdown()
 
 
 if __name__ == "__main__":

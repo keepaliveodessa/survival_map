@@ -151,7 +151,7 @@ class JWTConfig:
 class SimilarityConfig:
     """Параметры sliding-window линкера гео-объектов и LayerClassifier.
 
-    Используются GeoMatcher (processor/geo_matcher.py) и LayerClassifier.
+    Используются GeoMatcher (nlp_processor/geo_matcher.py) и LayerClassifier.
     Только поля, реально читаемые матчером; рудименты старого Python-резолвера
     (midpoint/lemma-fuzzy/tier-пороги) удалены — геометрию решает PostGIS
     (process_candidates_v2), распознавание — стем-индекс (Tier 1).
@@ -234,8 +234,8 @@ class ParserConfig:
 
 
 @dataclass
-class ProcessorConfig:
-    """Параметры processor-сервиса (NLP pipeline)."""
+class NlpProcessorConfig:
+    """Параметры nlp_processor-сервиса (NLP pipeline)."""
 
     # Число конкурентных воркеров, потребляющих из pending_events (SKIP LOCKED).
     worker_concurrency: int = 5
@@ -278,7 +278,7 @@ class Settings:
     geo: GeoConfig = field(default_factory=GeoConfig)
     layers: LayerConfig = field(default_factory=LayerConfig)
     parser: ParserConfig = field(default_factory=ParserConfig)
-    processor: ProcessorConfig = field(default_factory=ProcessorConfig)
+    nlp_processor: NlpProcessorConfig = field(default_factory=NlpProcessorConfig)
     question_overlay: QuestionOverlayConfig = field(default_factory=QuestionOverlayConfig)
 
 

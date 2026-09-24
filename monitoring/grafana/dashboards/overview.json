@@ -36,7 +36,7 @@
       "description": "up{job=\"nlp_processor\"} — NLP-конвейер",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 4, "w": 3, "x": 3, "y": 0 },
-      "targets": [{ "refId": "A", "expr": "up{job=\"nlp_processor\"}", "legendFormat": "processor" }],
+      "targets": [{ "refId": "A", "expr": "up{job=\"nlp_processor\"}", "legendFormat": "nlp_processor" }],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -96,7 +96,7 @@
       "description": "Скорость записи событий NLP-процессором",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 4, "w": 3, "x": 12, "y": 0 },
-      "targets": [{ "refId": "A", "expr": "sum(rate(processor_messages_processed_total[5m]))", "legendFormat": "events/s" }],
+      "targets": [{ "refId": "A", "expr": "sum(rate(nlp_processor_messages_processed_total[5m]))", "legendFormat": "events/s" }],
       "fieldConfig": {
         "defaults": {
           "unit": "ops",
@@ -186,15 +186,15 @@
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Processor — throughput и воркеры",
+      "title": "NLP Processor — throughput и воркеры",
       "description": "Обработка pending_events: processed/errors/expired и активные воркеры",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
       "targets": [
-        { "refId": "A", "expr": "rate(processor_messages_processed_total[5m])", "legendFormat": "processed/s" },
-        { "refId": "B", "expr": "rate(processor_messages_errors_total[5m])", "legendFormat": "errors/s" },
-        { "refId": "C", "expr": "rate(processor_messages_expired_total[5m])", "legendFormat": "expired/s" },
-        { "refId": "D", "expr": "processor_worker_active", "legendFormat": "active workers" }
+        { "refId": "A", "expr": "rate(nlp_processor_messages_processed_total[5m])", "legendFormat": "processed/s" },
+        { "refId": "B", "expr": "rate(nlp_processor_messages_errors_total[5m])", "legendFormat": "errors/s" },
+        { "refId": "C", "expr": "rate(nlp_processor_messages_expired_total[5m])", "legendFormat": "expired/s" },
+        { "refId": "D", "expr": "nlp_processor_worker_active", "legendFormat": "active workers" }
       ],
       "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } }

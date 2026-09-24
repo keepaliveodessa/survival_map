@@ -1,4 +1,4 @@
-"""Tests for processor expired-guard fix (P0.1).
+"""Tests for nlp_processor expired-guard fix (P0.1).
 
 _p0.1 spec:
 - _process_row() returns None (not 'expired') when event_time is outside
@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 try:
-    from processor.main import ProcessorBot
+    from nlp_processor.main import NlpProcessorBot
     _IMPORT_OK = True
     _IMPORT_ERR = None
 except Exception as e:
@@ -22,7 +22,7 @@ except Exception as e:
     _IMPORT_ERR = repr(e)
 
 pytestmark = pytest.mark.skipif(
-    not _IMPORT_OK, reason=f"processor.main import unavailable: {_IMPORT_ERR}"
+    not _IMPORT_OK, reason=f"nlp_processor.main import unavailable: {_IMPORT_ERR}"
 )
 
 
@@ -43,7 +43,7 @@ def _expired_row():
 
 
 def _make_bot_with_db():
-    bot = ProcessorBot()
+    bot = NlpProcessorBot()
     bot.db = MagicMock()
     bot.db.pool = MagicMock()
     conn = AsyncMock()
@@ -59,7 +59,7 @@ def _make_bot_with_db():
 # ============================================================
 
 class TestExpiredGuard:
-    """Tests for the expired-guard path in processor._process_row."""
+    """Tests for the expired-guard path in nlp_processor._process_row."""
 
     async def test_expired_message_marked(self):
         """event_time = now - 2h => _process_row returns None and calls
@@ -123,7 +123,7 @@ class TestExpiredGuard:
     async def test_not_expired_event_returns_result_not_none(self):
         """event_time within window => _process_row does NOT call
         _mark_expired (fallback: returns a dict from _insert_event)."""
-        bot = ProcessorBot()
+        bot = NlpProcessorBot()
         now = datetime.now(timezone.utc)
         valid_time = now - timedelta(minutes=5)
         row = {
