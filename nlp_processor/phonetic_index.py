@@ -67,6 +67,15 @@ class PhoneticIndex:
         # (в т.ч. внутри многословных: "застав" из ('2', 'застав')). Нужен для
         # предфильтра слайдинг-окна — см. has_stem_anywhere().
         self._all_stems: set = set()
+        # Стем → список стем-ключей, содержащих его (для subset-rescue:
+        # однословный surface "донского" ⊂ ключ ('дмитрий','донск')).
+        self._stem_to_keys: Dict[str, List[Tuple[str, ...]]] = {}
+        # Слово (lowercase) → число РАЗНЫХ geo-объектов, в чьих алиасах оно
+        # встречается. Родовые head-слова ("дорога" в «новая дорога»/«южная
+        # дорога») принадлежат 2+ объектам; уникальные части имени («донского»)
+        # — одному, даже если парадигма-генерация создала много вариантных
+        # фраз с этим словом. Используется subset-rescue'ом как guard.
+        self._alias_object_counts: Dict[str, int] = {}
 
     # ----------------------------------------------------------- helpers
 
@@ -183,8 +192,15 @@ class PhoneticIndex:
             stem_tuple = self._stem_tuple_for_name(name)
             # variant_text = сырой surface алиаса (не стем): нужен для разрешения
             # over-stem коллизий по поверхностной близости (Гаваи/Гаванная→"гава").
-            if stem_tuple and stem_tuple not in seen_stem:
-                seen_stem.add(stem_tuple)
+            # REG-фикс (events_export, «6 элемент» → 0.696): дедуп по stem_tuple
+            # выкидывал ВСЕ алиасы-омонимы одного объекта, кроме первого:
+            # «Шестой элемент» и «6 элемент» оба стеммятся в ('6','элемент')
+            # (словесные порядковые → цифра), побеждал первый алиас, и точный
+            # «6 элемент» получал ratio 0.64. Дедуп по (стем-кортеж, surface):
+            # каждый алиас остаётся в индексе, разрешение — в geo_matcher по
+            # max fuzz.ratio (все записи с одним street_id).
+            if stem_tuple and (stem_tuple, surface_phrase) not in seen_stem:
+                seen_stem.add((stem_tuple, surface_phrase))
                 stem_pairs.append(
                     (stem_tuple, PhoneticEntry(street_id, canonical, surface_phrase))
                 )
@@ -238,16 +254,44 @@ class PhoneticIndex:
         self._stem_index_sorted = new_stem_index_sorted
         self._surface_phrases = new_surface_phrases
         self._surface_phrase_meta = new_surface_meta
-        all_stems = set()
-        for key in new_stem_index:
-            all_stems.update(key)
-        self._all_stems = all_stems
+        self._rebuild_aux(new_stem_index, new_surface_phrases, new_surface_meta)
 
         logger.info(
             f"[PhoneticIndex] built: {len(new_surface_phrases)} surface phrases, "
             f"{len(new_stem_index)} stem tuples from {street_count} objects"
         )
         return len(new_surface_phrases)
+
+    def _rebuild_aux(
+        self,
+        stem_index: Dict[Tuple[str, ...], List[PhoneticEntry]],
+        surface_phrases: List[str],
+        surface_meta: List[PhoneticEntry],
+    ) -> None:
+        """Пересобрать вспомогательные индексы (_all_stems, _stem_to_keys,
+        _alias_object_counts) из уже собранных структур. Общий для build/replace."""
+        all_stems: set = set()
+        stem_to_keys: Dict[str, List[Tuple[str, ...]]] = {}
+        for key in stem_index:
+            for s in key:
+                all_stems.add(s)
+                stem_to_keys.setdefault(s, []).append(key)
+        self._all_stems = all_stems
+        self._stem_to_keys = stem_to_keys
+        # surface-фраза (lowercase clean) → множество street_id: парадигм-буст
+        # в geo_matcher (см. is_known_surface_for_object).
+        self._surface_to_objects: Dict[str, set] = {}
+
+        word_objects: Dict[str, set] = {}
+        surface_to_objects: Dict[str, set] = {}
+        for phrase, meta in zip(surface_phrases, surface_meta):
+            for w in set(phrase.split()):
+                word_objects.setdefault(w, set()).add(meta.street_id)
+            surface_to_objects.setdefault(phrase, set()).add(meta.street_id)
+        self._alias_object_counts = {
+            w: len(ids) for w, ids in word_objects.items()
+        }
+        self._surface_to_objects = surface_to_objects
 
     def replace_street(self, street_id: int, row: Optional[dict]) -> None:
         """Точечно заменить все записи одной улицы. row=None → улица удалена."""
@@ -282,10 +326,7 @@ class PhoneticIndex:
         self._stem_index_sorted = new_stem_index_sorted
         self._surface_phrases = new_surface_phrases
         self._surface_phrase_meta = new_surface_meta
-        all_stems = set()
-        for key in new_stem_index:
-            all_stems.update(key)
-        self._all_stems = all_stems
+        self._rebuild_aux(new_stem_index, new_surface_phrases, new_surface_phrase_meta)
         logger.info(f"[PhoneticIndex] reindexed street {street_id}")
 
     # ---------------------------------------------------------------- queries
@@ -328,3 +369,27 @@ class PhoneticIndex:
         кандидатов, иначе имя в начале сообщения теряется.
         """
         return stem in self._all_stems
+
+    def keys_with_stem(self, stem: str) -> List[Tuple[str, ...]]:
+        """Список стем-ключей, содержащих данный стем (для subset-rescue)."""
+        return list(self._stem_to_keys.get(stem, ()))
+
+    def alias_object_count(self, word: str) -> int:
+        """Сколько РАЗНЫХ geo-объектов содержат это слово (lowercase) в алиасах.
+
+        Родовые head-существительные повторяются в алиасах нескольких объектов
+        ("дорога": «новая дорога», «южная дорога»); уникальные части имён
+        ("донского") принадлежат одному объекту, даже если парадигма-генерация
+        создала много вариантных фраз с этим словом. Guard для subset-rescue.
+        """
+        return self._alias_object_counts.get(word.lower(), 0)
+
+    def is_known_surface_for_object(self, surface: str, street_id: int) -> bool:
+        """Surface-строка — известная словоформа (алиас/падежная форма) объекта.
+
+        Парадигм-генерация кладёт в surface-индекс все падежные формы проперов;
+        если Tier-1 окно текстуально совпало с такой формой ТОГО ЖЕ объекта,
+        fuzz-штраф за падеж («французского» vs «французский» → 0.78) не отражает
+        качество распознавания — матч следует считать уверенным (score 1.0).
+        """
+        return street_id in self._surface_to_objects.get(surface.lower(), ())

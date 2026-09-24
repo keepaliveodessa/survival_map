@@ -128,3 +128,4 @@ live_messages.txt
 
 # Reference docs (not project-specific)
 **/*.pdf
+.venv-nlp/

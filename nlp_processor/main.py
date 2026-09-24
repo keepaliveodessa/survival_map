@@ -30,9 +30,13 @@ from common.metrics import (
     nlp_processor_messages_processed_total,
     nlp_processor_messages_errors_total,
     nlp_processor_messages_expired_total,
+    nlp_processor_strategy_total,
+    nlp_processor_geo_miss_total,
+    nlp_processor_structured_total,
     nlp_processor_worker_active,
     nlp_processor_circuit_breaker_state,
 )
+from .structured_parser import parse_structured
 from .morphology import Morphology
 from .phonetic_index import PhoneticIndex
 from .geo_matcher import GeoMatcher
@@ -580,12 +584,13 @@ class NlpProcessorBot:
                 geo_ids=[], geo_scores=[], geo_texts=[],
                 source='promotional',
             )
+            nlp_processor_strategy_total.labels('random').inc()
             return self._enrich(result, tokens=tokens, geo_ids=[])
 
         try:
             entities = await asyncio.wait_for(
-                self.matcher.find_geo(tokens=tokens, lemmas=lemmas, text=raw_text),
-                timeout=15.0,
+                self._find_geo_with_fastpath(raw_text, tokens, lemmas, message_id),
+                timeout=20.0,
             )
         except asyncio.TimeoutError:
             logger.warning(f"[NLP] find_geo timeout for message {message_id}")
@@ -609,6 +614,15 @@ class NlpProcessorBot:
         geo_texts = geo_texts[:5]
 
         if not geo_ids:
+            # Geo-miss: реальный текст (>= 3 токенов, не промо), но ни одного
+            # geo-кандидата. Основной сигнал пробелов geo-справочника
+            # (см. postgres/quality_report.sql, Grafana Data Quality).
+            if len(tokens) >= 3:
+                nlp_processor_geo_miss_total.inc()
+                logger.info(
+                    "[geo-miss] layer=%s tokens=%d text=%s",
+                    layer, len(tokens), raw_text[:200],
+                )
             result = await self._insert_event(
                 message_id=message_id, event_time=event_time,
                 description=raw_text, photo_path=None,
@@ -620,6 +634,7 @@ class NlpProcessorBot:
                 geo_ids=[], geo_scores=[], geo_texts=[],
                 source='no_geo',
             )
+            nlp_processor_strategy_total.labels('random').inc()
             return self._enrich(result, tokens=tokens, geo_ids=geo_ids)
 
         result = self._enrich(
@@ -639,7 +654,69 @@ class NlpProcessorBot:
                 geo_ids=geo_ids, geo_scores=geo_scores, geo_texts=geo_texts,
                 source='geo_match',
             )
+            # Стратегия фактической вставки: process_candidates_v2 может
+            # вернуть random_null (geom NULL) → _insert_event_from_candidates
+            # делает fallback на random (R-PR22) — фиксируем реальный итог,
+            # а не гипотезу резолвера.
+            nlp_processor_strategy_total.labels(
+                result.get('strategy', 'unknown')
+            ).inc()
         return result
+
+    async def _find_geo_with_fastpath(self, raw_text, tokens, lemmas, message_id):
+        """Поиск гео с адресным fast-path для структурированных пинов (N4b).
+
+        Обычные сообщения (не шаблонные) идут общим путем байт-в-байт как раньше.
+        Для шаблонных (📍 … 🏠 Адрес: …): самый специфичный сегмент адреса
+        (с типом улицы) матчится прицельно через match_phrase; при уверенном
+        матче — единственный geo-кандидат (улица вместо района/POI из хвоста
+        адреса). Без матча — полный fallback на общий путь (find_geo по всему
+        тексту) — поведение идентично старому.
+
+        Kill-switch: settings.geo.structured_fastpath=False → fast-path
+        отключён, все сообщения — общий путь.
+        """
+        geo_cfg = settings.geo if settings else None
+        fastpath = bool(geo_cfg and geo_cfg.structured_fastpath)
+        sm = parse_structured(raw_text) if fastpath else None
+        if sm is None:
+            return await self.matcher.find_geo(
+                tokens=tokens, lemmas=lemmas, text=raw_text
+            )
+
+        # Fast-path: сегменты адреса уже в порядке приоритета (улица → прочее).
+        for segment in sm.address_segments:
+            try:
+                ent = await asyncio.wait_for(
+                    self.matcher.match_phrase(segment), timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[NLP] match_phrase timeout for %s segment %r", message_id, segment
+                )
+                continue
+            if ent and ent['score'] >= (
+                geo_cfg.candidate_min_score if geo_cfg else 0.80
+            ):
+                logger.info(
+                    "[NLP] structured fast-path %s: %r -> %s (%.2f, %s)",
+                    message_id, segment, ent['matched_name'],
+                    ent['score'], ent['source'],
+                )
+                nlp_processor_structured_total.labels('matched_address').inc()
+                return [ent]
+
+        # Уверенного матча по адресным сегментам нет — fallback на общий путь.
+        entities = await self.matcher.find_geo(
+            tokens=tokens, lemmas=lemmas, text=raw_text
+        )
+        if entities:
+            nlp_processor_structured_total.labels('fallback_general').inc()
+        else:
+            # Не геолоцирован никем из путей — вероятный пробел справочника
+            # (улица из адреса отсутствует в geo): см. quality_report.sql.
+            nlp_processor_structured_total.labels('no_match').inc()
+        return entities
 
     @staticmethod
     def _enrich(result, *, tokens, geo_ids):

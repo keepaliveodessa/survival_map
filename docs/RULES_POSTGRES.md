@@ -265,20 +265,20 @@ SELECT geom FROM geo WHERE id = $1;  -- может быть invalid
 |-----------|---------------|-------|
 | `random` | POINT | 0 совпадений (генерируется nlp_processor) |
 | `random_null` | NULL | Внутренний маркер: v2 не смог вычислить геометрию |
-| `single_match` | Любой | 1 совпадение (score >= порога, по умолчанию 0.70) |
-| `intersection` | POINT | Компактный кластер кандидатов (spread <= 40м), нет валидного street_segment |
-| `street_segment` | LINESTRING / MULTILINESTRING | Линия, имеющая связь с 2+ кандидатами (ST_Intersects или ST_DWithin <= 50м) |
-| `weighted_centroid` | POINT | 2+ кандидатов, scatter <= 1500м, **нет ни одного пересечения** между кандидатами |
+| `single_match` | Любой | 1 совпадение (score >= порога, по умолчанию 0.80 = `GEO_CANDIDATE_MIN_SCORE` в common/settings.py) |
+| `intersection` | POINT | Компактный кластер кандидатов (spread <= `p_intersection_buffer_m` × 2, по умолчанию 200м), нет валидного street_segment |
+| `street_segment` | LINESTRING / MULTILINESTRING | Линия, имеющая связь с 2+ кандидатами (ST_DWithin <= `p_intersection_buffer_m`, по умолчанию 100м) |
+| `weighted_centroid` | POINT | 2+ кандидатов, scatter <= 500м (по умолчанию, `GEO_WEIGHTED_CENTROID_MAX_SCATTER_M`), **нет ни одного пересечения** между кандидатами |
 
 **Правило:** `random`, `intersection`, `weighted_centroid` ВСЕГДА возвращают POINT (валидация через триггер). `street_segment` возвращает LINESTRING или MULTILINESTRING. `single_match` может быть любым типом. `random_null` имеет geom=NULL и НЕ проходит триггер — nlp_processor конвертирует в `random` перед INSERT.
 
 **District-кандидаты (R-DB8.district):** кандидат с типом `district` НИКОГДА не становится финальным объектом и не участвует в построении геометрий (гипотезы single_match/intersection/street_segment/weighted_centroid). district используется ТОЛЬКО как фильтр: остальные кандидаты вне полигона района отбрасываются. Если district — единственный кандидат (или все кандидаты отфильтрованы районом), функция возвращает `random_null` → nlp_processor вставляет событие со стратегией `random` (R-PR22).
 
 **Описание стратегий v2:**
-- `single_match`: выбирается один кандидат с highest score. При score >= `p_score_threshold` (по умолчанию 0.70, настраивается через `GEO_CANDIDATE_MIN_SCORE`) → участвует в гипотезах. При anti-list guard (сильный выброс >3000м) → принудительный single_match.
-- `intersection`: среднее координат всех кандидатов. Только если spread <= 40м (или ≤200м + хотя бы одна линия). Не переопределяет валидный `street_segment`.
-- `street_segment`: сегмент главной линии между первым и последним якорем. Главная линия: connection_count >= 2, tiebreak по score desc, длина desc. MULTILINESTRING → longest component. Сегмент 50–2500м. Boundary protection: GREATEST(0.001, ...) / LEAST(0.999, ...).
-- `weighted_centroid`: Weighted centroid из пересечений пар (вес ×2.5) и центроидов кандидатов (вес ×1.0). Scatter <= 1500м. **Применяется ТОЛЬКО если ни одна пара кандидатов не пересекается** — любое пересечение даёт приоритет `intersection`/`street_segment`.
+- `single_match`: выбирается один кандидат с highest score. При score >= `p_score_threshold` (по умолчанию 0.80, настраивается через `GEO_CANDIDATE_MIN_SCORE`) → участвует в гипотезах. При anti-list guard (сильный выброс >3000м) → принудительный single_match.
+- `intersection`: центроид точек пересечения кандидатов. Только если spread <= `p_intersection_buffer_m` × 2 (по умолчанию 200м). Не переопределяет валидный `street_segment`.
+- `street_segment`: сегмент главной линии между первым и последним якорем пересечений. Главная линия: связная компонента лучшего кандидата (BFS по ST_DWithin <= `p_intersection_buffer_m`), мин. 2 хита. Boundary protection: GREATEST(0.001, ...) / LEAST(0.999, ...).
+- `weighted_centroid`: Weighted centroid из пересечений пар (вес ×2.5) и центроидов кандидатов (вес ×1.0). Scatter <= 500м (по умолчанию). **Применяется ТОЛЬКО если ни одна пара кандидатов не пересекается** — любое пересечение даёт приоритет `intersection`/`street_segment`.
 - `random_null`: 0 валидных кандидатов (score < порога или невалидная геометрия). Processor генерирует случайную точку в зоне `question_overlay` (R-PR22).
 
 ### R-DB9: Валидация geometry ↔ strategy
@@ -307,7 +307,7 @@ CREATE OR REPLACE FUNCTION process_candidates_v2(
     p_scores             DOUBLE PRECISION[] DEFAULT NULL,
     p_texts              TEXT[]      DEFAULT NULL,
     p_hint               VARCHAR     DEFAULT NULL,
-    p_score_threshold    DOUBLE PRECISION DEFAULT 0.70
+    p_score_threshold    DOUBLE PRECISION DEFAULT 0.80
 )
 RETURNS TABLE (
     result_strategy      TEXT,
@@ -332,16 +332,16 @@ RETURNS TABLE (
 - `result_diagnostics` — JSONB с типом гипотезы, geo_ids, score
 
 **Внутренняя логика:**
-1. Дедупликация по geo_id (max score), фильтр score >= 0.70, лимит 10 кандидатов
+1. Дедупликация по geo_id (max score), фильтр score >= 0.80 (по умолчанию), лимит 10 кандидатов
 2. Загрузка `geo.geom_m` (3857) для быстрых ST_DWithin/ST_Distance
 3. split на lines (LINESTRING/MULTILINESTRING) и points (POINT/POLYGON)
-4. connections: ST_Intersects OR ST_DWithin(50m) между lines и всеми кандидатами
-5. Main Line Election: line с connection_count >= 2, tiebreak score desc, length desc
-6. Normalize Main Line: LINESTRING as-is; MULTILINESTRING → longest component
-7. Street Segment: project anchors via ST_LineLocatePoint, build ST_LineSubstring с boundary protection, validate 50–2500m
-8. Intersection: compact anchor cluster (radius <= 40m), только если нет валидного street_segment
-9. Weighted Centroid: scatter <= 1500м, только если нет линии/сегмента
-10. Anti-list Guard: сильный кандидат (score >= 0.85) на расстоянии >2000м от выбранной геометрии → fallback single_match
+4. connections: граф кандидатов по ST_DWithin(geom_m, p_intersection_buffer_m, по умолчанию 100м)
+5. Main Component: связная компонента лучшего кандидата (BFS, до 3 уровней)
+6. Кандидаты компоненты → гипотезы single/street_segment/intersection/wc
+7. Street Segment: главная линия (>= 2 хита пересечений в буфере), ST_LineSubstring между min/max frac с boundary protection
+8. Intersection: центроид точек пересечения компоненты (spread <= p_intersection_buffer_m × 2), только если нет валидного street_segment
+9. Weighted Centroid: scatter <= 500м (по умолчанию), только если нет линии/сегмента
+10. Anti-list Guard: сильный кандидат (score >= 0.85) на расстоянии >3000м (v_anti_list_m) от выбранной геометрии → fallback single_match
 11. Single Match: лучший кандидат по score, tiebreak тип (line > point), длина, geo_id
 12. District filter: district исключается из кандидатов; district-полигон фильтрует кандидатов вне района; district-only → random_null с diagnostics reason='district_only' (см. R-DB8.district)
 13. Random Null: 0 валидных кандидатов → strategy='random_null', geom=NULL

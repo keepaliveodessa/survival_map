@@ -10,6 +10,8 @@ from common.metrics import (  # noqa: F401 — регистрация в REGISTR
     nlp_processor_messages_processed_total,
     nlp_processor_messages_errors_total,
     nlp_processor_messages_expired_total,
+    nlp_processor_strategy_total,
+    nlp_processor_geo_miss_total,
     nlp_processor_worker_active,
     nlp_processor_circuit_breaker_state,
 )

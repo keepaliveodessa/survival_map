@@ -17,7 +17,8 @@ from rapidfuzz import process as rf_process
 
 from .morphology import Lemma, Morphology
 from .phonetic_index import PhoneticIndex
-from .word_tokenizer import Token
+from .word_tokenizer import Token, tokenize
+from common.text_preprocessor import clean
 
 if TYPE_CHECKING:
     from .phonetic_index import PhoneticEntry
@@ -100,18 +101,32 @@ _LOC_PREPS: frozenset = frozenset({
     'около', 'возле', 'вдоль',
 })
 
-# Шумовые служебные токены («ст.», «ул.», «г.» + суффиксы порядковых +
-# описательные прилагательные между числом и названием).
-# Пропускаемые слайдинг-окном: «11 ст. Фонтана» → ключ (11, фонтана),
-# «5 ст большого Фонтана» → ключ (5, фонтана) — «большого» вырезается.
+# Шумовые служебные токены («ст.», «ул.», «г.» + суффиксы порядковых).
+# Пропускаемые слайдинг-окном: «11 ст. Фонтана» → ключ (11, фонтана).
+#
+# REG-фикс (events_export, «Новая дорога стали менты…» → random): описательные
+# прилагательные (большой/малый/старый/новый + падежи) УДАЛЕНЫ из шума — они
+# являются частью официальных имён объектов («Новая дорога», «Малая Арнаутская»,
+# «Большая Дерибасовская»), и вырезание ломало Tier 1: окно «новая дорога» не
+# генерировалось вовсе, а Tier 2 по хвосту «дорога» резался prefix-guard'ом
+# (д ≠ н). Побочный эффект (мусорное окно «большого Фонтана») безопасен:
+# Tier 1 мимо, Tier 2 не проходит prefix-guard/fuzzy-порог, а «Фонтана»
+# матчится соседним окном как раньше.
 _NOISE_TOKENS: frozenset = frozenset({
     'ст', 'ул', 'вул', 'пр', 'пер', 'ш', 'им', 'г', 'го', 'й', 'ій', 'йй',
-    # Описательные прилагательные ( padежные формы):
-    # «5 ст большого Фонтана» → «5 Фонтана», «первая старого Фонтана» → «первая Фонтана»
-    'большого', 'малого', 'старого', 'нового',
-    'большая', 'малая', 'старая', 'новая',
-    'большой', 'малый', 'старый', 'новый',
     'первого', 'второго', 'третьего',
+})
+
+# Родовые head-слова гео-имён: часто встречаются в тексте сами по себе
+# («дорога на 7-й», «улица перекрыта») и НЕ должны rescu-иться subset-матчем
+# до полного имени («южная дорога», «Улица Толбухина»). Сравнение — по stem,
+# но все формы здесь в именительном падеже, а surface уже lowercase.
+_GENERIC_HEAD_WORDS: frozenset = frozenset({
+    'улица', 'улицю', 'дорога', 'дорогу', 'дороги',
+    'площадь', 'площадью', 'парк', 'парка', 'сквер', 'сквера',
+    'мост', 'моста', 'переулок', 'переулка', 'проспект', 'проспекта',
+    'рынок', 'рынка', 'вокзал', 'вокзала', 'станция', 'станции',
+    'бульвар', 'бульвара', 'набережная', 'застава', 'заставы',
 })
 
 # Типы в порядке приоритета: settlement выше street
@@ -399,20 +414,102 @@ class GeoMatcher:
             hit = self._index.query_stem_tuple_sorted(stems)
             source = 'stem_reorder'
 
+        # Subset-rescue (REG-фикс events_export id 1, «Д.донского/ Ромашковая»):
+        # аббревиатура перед фамилией даёт однословное окно с уникальным стемом
+        # фамильной части («донского» → 'донск'), у которого нет собственного
+        # ключа, но есть ключ-надмножество ('дмитр','донск'). Раньше окно
+        # молча умирало → событие в random.
+        # Guards против ложных срабатываний:
+        #  1) длина поверхности >= 4 (одно-двухбуквенные окна не рескьюим);
+        #  2) алиас-кандидат не содержит родовых head-слов (улица/дорога/парк…)
+        #     и слов, встречающихся в 2+ алиасах — иначе «дорога на 7-й»
+        #     заматчилась бы на «южную дорогу», «улица» — на «Улицу Толбухина»;
+        #  3) частичный поверхностный матч: fuzz.partial_ratio >= 95
+        #     (surface — подстрока полного имени: «донского» ⊂ «дмитрия донского»).
+        if not hit and len(stems) == 1 and len(surface) >= 4:
+            rescue: List["PhoneticEntry"] = []
+            for key in self._index.keys_with_stem(stems[0]):
+                if len(key) >= 2:
+                    rescue.extend(self._index.query_stem_tuple(key))
+            rescue = [
+                e for e in rescue
+                if not any(
+                    w in _GENERIC_HEAD_WORDS
+                    or self._index.alias_object_count(w) >= 2
+                    for w in e.variant_text.split()
+                )
+                and fuzz.partial_ratio(surface, e.variant_text) >= 95
+            ]
+            if rescue:
+                hit = rescue
+                source = 'stem_subset'
+
         if hit:
-            if len({e.street_id for e in hit}) > 1:
-                best = max(hit, key=lambda e: fuzz.ratio(surface, e.variant_text))
-            else:
-                best = hit[0]
+            # REG-фикс (events_export, «6 элемент» → score 0.696): выбор hit[0]
+            # игнорировал остальные алиасы ТОГО ЖЕ объекта: для «6 элемент»
+            # exact-хиты — ('6','элемент') и ('шестой','элемент'), и побеждал
+            # «Шестой элемент» с ratio 0.64 вместо 1.0 по идентичному алиасу.
+            # Теперь surface-близость решает всегда: уникальные алиасы одного
+            # объекта не конфликтуют (max по ratio возвращает их общий geo_id),
+            # для разных объектов логика не изменилась.
+            best = max(
+                hit,
+                # ratio — главный критерий (partial favoreет КОРОТКИЕ кандидаты:
+                # «Гаваи» — почти-подстрока «гаванной» — иначе обгонял бы
+                # «Гаванную», ломая test_gavannaya_recall); partial — только
+                # tiebreak для subset-rescue (равные ratio у разных алиасов).
+                key=lambda e: (
+                    fuzz.ratio(surface, e.variant_text),
+                    fuzz.partial_ratio(surface, e.variant_text),
+                ),
+            )
+
+            # Скоринг: для exact-матчей ratio = 1.0 — поведение исходного кода
+            # не меняется. Для subset-rescue surface — подмножество полного
+            # имени («донского» vs «дмитрия донского»): partial_ratio = 100,
+            # но полный рейтинг честнее — score = max(ratio, 0.85 * partial):
+            # «донского» → 0.85 (проходит порог 0.80 в process_candidates_v2),
+            # при этом явная неполнота совпадения отражена в score.
+            score = max(
+                fuzz.ratio(surface, best.variant_text) / 100.0,
+                0.85 * fuzz.partial_ratio(surface, best.variant_text) / 100.0,
+            )
+            # Парадигм-буст (REG: acceptance кейс 3, «французского» → 0.78):
+            # если surface — известная словоформа того же объекта, fuzz-штраф
+            # за падеж не отражает качество распознавания — матч уверенный.
+            # Два пути:
+            #  1) форма есть в парадигм-индексе объекта (проперы, R-PR30);
+            #  2) surface и алиас — формы одной лексемы по pymorphy (словарные
+            #     имена-прилагательные вроде «Французский», которых парадигма
+            #     не генерирует из-за отсутствия Geox-тега).
+            if score < 1.0 and (
+                self._index.is_known_surface_for_object(surface, best.street_id)
+                or self._is_same_lexeme(surface, best.variant_text)
+            ):
+                score = 1.0
             return {
                 'geo_id': best.street_id,
-                'score': fuzz.ratio(surface, best.variant_text) / 100.0,
+                'score': score,
                 'matched_name': best.canonical_name,
                 'text': surface,
                 'source': source,
                 '_span': span,
             }
         return None
+
+    def _is_same_lexeme(self, surface: str, variant: str) -> bool:
+        """True, если surface и variant — формы одной лексемы (pymorphy).
+
+        Для OOV-проперов pymorphy возвращает саму словоформу как normal_form —
+        сравнение честно даёт False и буст не применяется (там работает
+        парадигм-индекс). Служебный guard для парадигм-буста Tier 1.
+        """
+        try:
+            n1 = self._morph.lemmatize_word(surface).normal_form
+            n2 = self._morph.lemmatize_word(variant).normal_form
+            return bool(n1) and n1 == n2
+        except Exception:
+            return False
 
     async def _link_span(self, surface: str, stems: Tuple[str, ...], span: Tuple[int, int]) -> Optional[Dict]:
         """Поиск geo-объекта по тексту: Tier 1 (стемы) → Tier 2 (опечатки).
@@ -516,6 +613,34 @@ class GeoMatcher:
             f"{[(r['matched_name'], round(r['score'], 2), r['source']) for r in results]}"
         )
         return results
+
+    async def match_phrase(self, phrase: str) -> Optional[Dict]:
+        """Прицельный матч одного фрагмента текста (адресный fast-path, N4b).
+
+        Делегирует в find_geo на тексте фрагмента и возвращает ЛУЧШИЙ результат
+        (find_geo уже отсортировал: score desc, затем длинный матч выше).
+        ТЕ ЖЕ примитивы и пороги (Tier 1/2, POS-filter, stopwords, longest-match,
+        subset-rescue) — второй реализации матчинга нет, поведение идентично
+        общему пути на том же тексте.
+
+        Возвращает dict {geo_id, score, matched_name, text, source, type} или
+        None. Порог фильтрует ВЫЗЫВАЮЩИЙ (0.80, как candidate_min_score).
+        """
+        if not self._initialized or not phrase:
+            return None
+        cleaned = clean(phrase)
+        if not cleaned:
+            return None
+        tokens = tokenize(cleaned)
+        if not tokens:
+            return None
+        lemmas = self._morph.lemmatize_tokens(tokens)
+        results = await self.find_geo(tokens=tokens, lemmas=lemmas)
+        if not results:
+            return None
+        best = results[0]
+        best.setdefault('type', self._geo_types.get(best['geo_id'], ''))
+        return best
 
     async def find_geo(
         self,

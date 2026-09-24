@@ -13,7 +13,7 @@
 
 Processor — единственный сервис, выполняющий NLP-пайплайн:
 ```
-pending_events → tokenize → lemmatize → classify → find_geo → process_candidates → INSERT INTO events
+pending_events → tokenize → lemmatize → classify → find_geo → process_candidates_v2 → INSERT INTO events
 ```
 
 **Запрещено:**
@@ -144,13 +144,13 @@ delay = min(2 ** attempt, 30)
 Python **ДОЛЖЕН ограничивать** количество кандидатов, передаваемых в `process_candidates_v2` (строго **Top-5** по `score`). Передача неограниченного списка запрещена, так как это вызывает деградацию БД.
 
 ```python
-# R-PR10: hard cap at Top-5 to protect PostGIS process_candidates from CROSS JOIN blowup
+# R-PR10: hard cap at Top-5 to protect PostGIS process_candidates_v2 from CROSS JOIN blowup
 geo_ids = geo_ids[:5]
 geo_scores = geo_scores[:5]
 geo_texts = geo_texts[:5]
 ```
 
-**Вызов из Python (5 параметров, порог из .env):**
+**Вызов из Python (7 параметров, пороги из .env / common/settings.py):**
 
 ```sql
 WITH pc AS (
@@ -158,7 +158,9 @@ WITH pc AS (
            result_confidence, result_diagnostics
     FROM process_candidates_v2(
         $6::int[], $7::double precision[], $8::text[], $9::varchar,
-        $10::double precision  -- geo_candidate_min_score (из .env)
+        $10::double precision,  -- GEO_CANDIDATE_MIN_SCORE (default 0.80)
+        $11::double precision,  -- GEO_INTERSECTION_BUFFER_M (default 100)
+        $12::double precision   -- GEO_WEIGHTED_CENTROID_MAX_SCATTER_M (default 500)
     )
 ),
 inserted AS (
@@ -270,7 +272,7 @@ self.index = PhoneticIndex(self.morph)  # stem-based inverted index
 entities = await self.matcher.find_geo(tokens=tokens, lemmas=lemmas)
 # Два тира:
 # Tier 1: stem exact (snowballstemmer)
-# Tier 2: surface typo (rapidfuzz token_sort_ratio ≥ 0.85)
+# Tier 2: surface typo (rapidfuzz WRatio, порог = SIMILARITY_SURFACE_TYPO_THRESHOLD, по умолчанию 0.80)
 ```
 
 **Правило:** Матчер возвращает список `[{geo_id, score, text, type}]`.
@@ -350,7 +352,7 @@ Processor переиспользует `common/settings.py`. Собственн�
 
 ### R-PR27: Geometry-First (Отказ от семантических эвристик в геометрии)
 Processor НЕ ДОЛЖЕН анализировать семантику текста (предлоги «между/от/до», отрицания «не/нет», контекстные списки) для выбора стратегии геометрии или фильтрации кандидатов.
-Выбор стратегии (`single_match`, `intersection`, `street_segment`, `weighted_centroid`) определяется **ИСКЛЮЧИТЕЛЬНО** пространственными отношениями найденных кандидатов в функции `process_candidates()` (PostGIS).
+Выбор стратегии (`single_match`, `intersection`, `street_segment`, `weighted_centroid`) определяется **ИСКЛЮЧИТЕЛЬНО** пространственными отношениями найденных кандидатов в функции `process_candidates_v2()` (PostGIS).
 
 ### R-PR28: Docker Security
 
@@ -368,16 +370,16 @@ nlp_processor:
 
 **Правило:** Processor работает от non-root (UID 1000). `cap_drop: ALL`. tmpfs 50MB для NLP-операций.
 
-**Алгоритм принятия решений (PostGIS):**
-1. Наличие 2+ пересекающихся LINESTRING → `intersection` (POINT).
-2. Наличие «главной» LINESTRING, имеющей пространственную связь (пересечение или `ST_DWithin` ≤ 50м) с 2+ другими кандидатами → `street_segment` (LINESTRING).
-3. **Ни одна пара кандидатов не пересекается**, компактный кластер (scatter ≤ 1500м) → `weighted_centroid` (POINT). Если хотя бы одна пара пересекается → приоритет `intersection` или `street_segment`.
+**Алгоритм принятия решений (PostGIS, process_candidates_v2):**
+1. Точки пересечения кандидатов связной компоненты (компактный кластер, spread ≤ буфер × 2) → `intersection` (POINT).
+2. Главная LINESTRING компоненты с 2+ хитами пересечений в буфере (`p_intersection_buffer_m`, по умолчанию 100м) → `street_segment` (LINESTRING).
+3. **Ни одна пара кандидатов не пересекается**, компактный кластер (scatter ≤ `GEO_WEIGHTED_CENTROID_MAX_SCATTER_M`, по умолчанию 500м) → `weighted_centroid` (POINT). Если хотя бы одна пара пересекается → приоритет `intersection` или `street_segment`.
 4. 1 кандидат → `single_match`.
-5. 0 кандидатов или scatter > 1500м → `random`.
+5. 0 валидных кандидатов → `random_null` → nlp_processor вставляет `random` (R-PR22).
 
 **Запрещено:**
 - Pre-filter в Python на основе NLP-правил (удаление кандидатов из-за частицы «не»).
-- Передача «хинтов» (hints) из `SemanticResolver` в `process_candidates`.
+- Передача «хинтов» (hints) из `SemanticResolver` в `process_candidates_v2`.
 - Дроп кандидатов на основе контекста. Если `GeoMatcher` нашел топоним с `score >= threshold`, он передается в SQL.
 
 **Принцип:** «Если матчер нашел топоним, он участвует в геометрическом расчете. Топология OSM сама расставит точки над i`.

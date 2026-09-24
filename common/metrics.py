@@ -14,6 +14,11 @@ App-метрики parser/nlp_processor (экспортируются кажды
     asyncio-очереди и режим backpressure (прямая запись в БД);
   - nlp_processor_messages_processed_total / nlp_processor_messages_errors_total /
     nlp_processor_messages_expired_total — результаты NLP-обработки;
+  - nlp_processor_strategy_total{strategy} — распределение стратегий геометрии
+    вставленных событий (доля random = доля негеолоцированных событий);
+  - nlp_processor_geo_miss_total — сообщения с реальным текстом (>=3 токенов,
+    не промо), но без ни одного geo-кандидата — основной сигнал пробелов
+    geo-справочника (см. postgres/quality_report.sql и Grafana Data Quality).
   - nlp_processor_worker_active — активные воркеры (сравнение с concurrency);
   - nlp_processor_circuit_breaker_state — состояние CircuitBreaker
     (0=closed 1=half_open 2=open; ненулевое значение = деградация БД).
@@ -83,6 +88,26 @@ if Counter is not None:
         "Total pending_events tasks expired (event_time outside window)",
     )
 
+    nlp_processor_strategy_total = Counter(
+        "nlp_processor_strategy_total",
+        "Total inserted events by geometry strategy (random/single_match/...)",
+        ["strategy"],
+    )
+
+    nlp_processor_geo_miss_total = Counter(
+        "nlp_processor_geo_miss_total",
+        "Messages with real text (>=3 tokens, non-promotional) but zero geo matches "
+        "— primary signal for geo dictionary gaps",
+    )
+
+    nlp_processor_structured_total = Counter(
+        "nlp_processor_structured_total",
+        "Structured pins (📍 + Адрес:) by fast-path result "
+        "(matched_address = улица из адреса; fallback_general = матч общим путем; "
+        "no_match = не геолоцирован)",
+        ["result"],
+    )
+
     nlp_processor_worker_active = Gauge(
         "nlp_processor_worker_active",
         "Currently running NLP worker tasks",
@@ -132,6 +157,9 @@ else:
     nlp_processor_messages_processed_total = _NoopCounter()
     nlp_processor_messages_errors_total = _NoopCounter()
     nlp_processor_messages_expired_total = _NoopCounter()
+    nlp_processor_strategy_total = _NoopCounter()
+    nlp_processor_geo_miss_total = _NoopCounter()
+    nlp_processor_structured_total = _NoopCounter()
     nlp_processor_worker_active = _NoopGauge()
     nlp_processor_circuit_breaker_state = _NoopGauge()
 

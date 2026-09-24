@@ -45,7 +45,9 @@ from common.metrics import (
 
 logger = logging.getLogger(__name__)
 
-KIEV_TZ = ZoneInfo('Europe/Kiev')
+# Europe/Kyiv — актуальное имя зоны (Europe/Kiev — легаси-алиас, который
+# исчезает в свежих tzdata; см. docs/audit-review-2026-09-20.md, L-2).
+KIEV_TZ = ZoneInfo('Europe/Kyiv')
 
 _MIN_WORKERS = 2
 _MAX_WORKERS = 8

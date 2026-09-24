@@ -269,11 +269,15 @@ LIMIT 10;
 -- ========================================
 -- События с низкой уверенностью (confidence < 0.7) за последний час
 -- Порог алерта: >10 событий/час
+-- NOTE: avg_spread берётся из geo_diagnostics.scatter_m (weighted_centroid):
+-- ST_Distance(geom, ST_Centroid(geom)) для POINT всегда 0 и диагностической
+-- ценности не несёт. Для прочих стратегий scatter_m отсутствует (NULL) —
+-- AVG игнорирует NULL-строки.
 SELECT
     DATE_TRUNC('hour', event_time) AS hour,
     COUNT(*) AS low_confidence_count,
     ROUND(AVG(confidence)::numeric, 3) AS avg_confidence,
-    ROUND(AVG(ST_Distance(geom, ST_Centroid(geom)))::numeric, 2) AS avg_spread_m
+    ROUND(AVG((geo_diagnostics->>'scatter_m')::numeric), 2) AS avg_scatter_m
 FROM events
 WHERE event_time >= NOW() - INTERVAL '1 hour'
   AND confidence < 0.7
@@ -329,15 +333,17 @@ ORDER BY strategy, confidence_bucket;
 -- ========================================
 -- 20. Hypothesis Win Rate (diagnostics)
 -- ========================================
--- Процент побед каждой гипотезы (из geo_diagnostics)
+-- Процент побед каждой гипотезы из geo_diagnostics.
+-- geo_diagnostics — JSONB ОБЪЕКТ (jsonb_build_object('type', ...), см.
+-- process_candidates_v2), а не массив: извлекаем поля напрямую, без
+-- jsonb_array_elements (который на объекте молча не даёт строк).
 SELECT
-    (d->>'type') AS hypothesis,
+    geo_diagnostics->>'type' AS hypothesis,
     COUNT(*) AS wins,
     ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER ()::numeric, 2) AS win_pct,
-    ROUND(AVG((d->>'score')::FLOAT)::numeric, 3) AS avg_score
-FROM events e,
-     jsonb_array_elements(e.geo_diagnostics) AS d
-WHERE e.event_time >= NOW() - INTERVAL '24 hours'
-  AND e.geo_diagnostics ? 'type'
-GROUP BY (d->>'type')
+    ROUND(AVG((geo_diagnostics->>'score')::FLOAT)::numeric, 3) AS avg_score
+FROM events
+WHERE event_time >= NOW() - INTERVAL '24 hours'
+  AND geo_diagnostics ? 'type'
+GROUP BY geo_diagnostics->>'type'
 ORDER BY wins DESC;

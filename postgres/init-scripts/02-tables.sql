@@ -37,13 +37,15 @@ CREATE TABLE IF NOT EXISTS events (
     layer TEXT NOT NULL DEFAULT 'pig'
         CHECK (layer IN ('pig', 'cops', 'bus', 'traffic')),
     matches JSONB,
+    -- Множество стратегий = фактический выход process_candidates_v2
+    -- (16-process-candidates-v2.sql). random_null в events не попадает:
+    -- nlp_processor конвертирует его в random (R-PR22).
     strategy VARCHAR(40) NOT NULL CHECK (strategy IN (
         'random',
         'single_match',
         'intersection',
-        'midpoint',
-        'proximity',
-        'cluster_centroid'
+        'street_segment',
+        'weighted_centroid'
     )),
     geom GEOMETRY,
     confidence FLOAT DEFAULT 0.0,
@@ -51,6 +53,8 @@ CREATE TABLE IF NOT EXISTS events (
     PRIMARY KEY (id, event_time)
 ) PARTITION BY RANGE (event_time);
 
+-- Примечание: миграционный блок ниже (DROP/UPDATE/ADD CONSTRAINT) нужен только
+-- для томов, созданных со старой схемой v1; на fresh-томе он идемпотентен.
 -- Создаём партиции с -1 часа до +1 часа вперёд
 DO $$
 DECLARE
@@ -83,9 +87,9 @@ CREATE INDEX IF NOT EXISTS idx_events_message_id ON events(message_id);
 -- NULL в unique-индексе не равен NULL, поэтому WHERE не нужен.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_message_id_unique ON events(message_id, event_time);
 
--- CHECK strategy: только стратегии, которые реально выдают process_candidates.
--- Старые приблизительные стратегии (nearest_point, within_polygon и др.) заменяются
--- на single_match при миграции.
+-- CHECK strategy: синхронизация живого тома с актуальным множеством.
+-- Исторические значения v1 (midpoint/proximity/cluster_centroid) мигрируются в
+-- weighted_centroid, затем CHECK пересоздаётся в суженном виде.
 ALTER TABLE events DROP CONSTRAINT IF EXISTS events_strategy_check;
 UPDATE events SET strategy = 'weighted_centroid'
 WHERE strategy IN ('midpoint', 'proximity', 'cluster_centroid');

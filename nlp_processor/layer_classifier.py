@@ -18,6 +18,16 @@
 HARD RULES (переопределяют standard priority):
   - «блокпост» / «бп» → traffic (situational keyword, НЕ cops)
   - Template messages (📍📌 + Адрес:) → pig (structured info, не situational)
+    REG-фикс (events_export, «📍 Полиция (пешие) 🏠 Адрес: …» → pig): шаблонный
+    заголовок — это ТИП события, а не приговор слою. Теперь шаблон сначала
+    классифицируется по словарям (bus → cops → traffic → pig) по ТОКЕНАМ
+    ЗАГОЛОВКА (текст до 🏠); совпадение — берём этот слой, иначе pig-фоллбек.
+    Описание в подсчёт не входит: там чужие слова («В составе могут быть и
+    ТЦК и полиция» не должно менять слой пина). Тексты до 🏠, совпавшие со
+    словарями (поправка от владельца проекта): «Блокпост»→traffic,
+    «Полиция (пешие)»→cops, «Мусоровоз»→cops (полицейский фургон),
+    «Черный/Белый/Серый транспорт»→bus (перемещение транспорта),
+    «Тцк (пешие)»→pig (словарь pig).
 """
 
 import logging
@@ -58,8 +68,10 @@ class LayerClassifier:
         """morph — Morphology обёртка (общий MorphAnalyzer на процесс)."""
         self._morph = morph
         # {layer: множество лемматизированных ключевых слов}
+        # pig включён для словарной классификации заголовков шаблонных пинов
+        # (HARD RULE 2, REG-фикс «Полиция (пешие)» → pig).
         self._keyword_lemmas: Dict[str, Set[str]] = {}
-        for layer in _LAYER_PRIORITY:
+        for layer in _LAYER_PRIORITY + ('pig',):
             self._keyword_lemmas[layer] = {
                 self._lemma(kw) for kw in _get_layer_keywords(layer) if kw
             }
@@ -76,7 +88,7 @@ class LayerClassifier:
         return self._morph.lemmatize_word(word).normal_form
 
     def classify(self, lemmas: List[Lemma], raw_text: str = None) -> str:
-        """Слой по приоритету bus → cops → traffic, иначе 'pig'.
+        """Слой по приоритету bus → cops → traffic → pig, иначе 'pig'.
 
         Принимает уже лемматизированные токены (от Morphology.lemmatize_tokens).
         Слой определяется по совпадению лемм с ключевыми словами слоёв,
@@ -95,11 +107,25 @@ class LayerClassifier:
             # не является гео-названием — это situation descriptor.
             if 'блокпост' in token_lemmas or 'бп' in token_lemmas:
                 result = 'traffic'
-            # HARD RULE 2: Template messages (📍📌 + Адрес:) → pig
-            # Шаблонные сообщения — structured info, не situational.
-            # Даже если описание содержит «менты/мусора», слой = pig.
+            # HARD RULE 2 (REG-фикс): шаблонные пины (📍/📌 + Адрес:) —
+            # сначала словарная классификация по ЗАГОЛОВКУ (текст до 🏠).
+            # Раньше весь шаблон безусловно уходил в pig: «📍 Полиция (пешие)»
+            # получал слой pig, хотя заголовок — точный тип события. Теперь:
+            # заголовок проходит обычный словарный приоритет (bus → cops →
+            # traffic → pig); без совпадения — pig-фоллбек (старое поведение).
+            # Описание (после 📝) в подсчёт не входит — там шаблонный текст
+            # «В составе могут быть и ТЦК и полиция».
             elif raw_text and _TEMPLATE_RE.search(raw_text):
-                result = 'pig'
+                title_lemmas = self._template_title_lemmas(raw_text)
+                if title_lemmas is None:
+                    # Заголовок не распознан (нет 🏠/Адрес) — старое поведение.
+                    result = 'pig'
+                else:
+                    result = 'pig'
+                    for layer in _LAYER_PRIORITY + ('pig',):
+                        if self._keyword_lemmas[layer] & title_lemmas:
+                            result = layer
+                            break
             # Standard priority: bus → cops → traffic
             else:
                 for layer in _LAYER_PRIORITY:
@@ -110,3 +136,16 @@ class LayerClassifier:
         if layer_classification_fallback_total is not None:
             layer_classification_fallback_total.labels(result).inc()
         return result
+
+    def _template_title_lemmas(self, raw_text: str) -> Optional[Set[str]]:
+        """Леммы заголовка шаблонного пина (текст между 📍/📌 и 🏠 или до «Адрес:»)."""
+        m = re.search(r'(?:📍|📌)\s*([^🏠]+?)\s*(?:🏠|Адрес\s*:)', raw_text, re.IGNORECASE)
+        if not m:
+            return None
+        title = m.group(1)
+        lemmas: Set[str] = set()
+        for token in re.findall(r'[\wа-яё]+', title, re.IGNORECASE):
+            lemma = self._morph.lemmatize_word(token)
+            if lemma.normal_form:
+                lemmas.add(lemma.normal_form)
+        return lemmas

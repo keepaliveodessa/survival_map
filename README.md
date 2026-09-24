@@ -246,9 +246,11 @@ docker compose --profile monitoring up -d
 торчит (доступ с другой машины: `ssh -L 3000:localhost:3000 -L 9090:localhost:9090 <host>`).
 Пароль Grafana задавайте через `GRAFANA_ADMIN_PASSWORD` в `.env` (дефолт `admin`).
 
-Автоматически провижинятся datasource (Prometheus, Loki) и три дашборда
+Автоматически провижинятся datasource (Prometheus, Loki) и четыре дашборда
 (папка "Survival Map"): **Overview** — health сервисов, конвейер
-parser→nlp_processor, HTTP core, TPS/кэш PostgreSQL; **Containers** — CPU/RAM/сеть/disk
+parser→nlp_processor, HTTP core, TPS/кэш PostgreSQL; **Data Quality** — доля
+геолоцированных событий (random share), распределение стратегий, geo-miss;
+**Containers** — CPU/RAM/сеть/disk
 по контейнерам (cAdvisor); **Logs** — объём логов, ошибки, живой поток (Loki:
 лейбл `service` — имя compose-сервиса, ошибки фильтруются по `detected_level`).
 Логи контейнеров собирает promtail через docker.sock.
@@ -256,7 +258,12 @@ parser→nlp_processor, HTTP core, TPS/кэш PostgreSQL; **Containers** — CPU
 Ключевые метрики конвейера: `parser_queue_size` (рост к 60/65 = backpressure),
 `nlp_processor_messages_errors_total` (перманентные ошибки NLP),
 `nlp_processor_circuit_breaker_state > 0` (деградация БД),
-`rate(nlp_processor_messages_processed_total[5m])` (события/сек).
+`rate(nlp_processor_messages_processed_total[5m])` (события/сек),
+`nlp_processor_strategy_total{strategy="random"}` (доля негеолоцированных
+событий; рост > 50%/час = деградация матчинга или пробелы geo-справочника),
+`nlp_processor_geo_miss_total` (сообщения с реальным текстом без ни одного
+geo-кандидата — корм для пополнения справочника). Отчёт по качеству данных
+в SQL: `postgres/quality_report.sql`.
 
 Приложение-метрики экспортируются сервисами напрямую (без авторизации —
 порты доступны только внутри docker-сети: expose, не ports).
