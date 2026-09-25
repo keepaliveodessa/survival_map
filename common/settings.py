@@ -250,6 +250,11 @@ class ParserConfig:
     # Макс. длина текста (символов) после preprocess_light для вставки в pending_events.
     max_text_length: int = 380
 
+    # Окно дедупликации повторных сообщений канала (сек, N4c): повторный текст
+    # (без учёта регистра/пунктуации/эмодзи) в пределах окна — дубликат, в
+    # pending_events не пишется. 0 — отключить дедуп.
+    dedup_window_seconds: float = 1800.0
+
     # SOCKS5/HTTP proxy для pyrogram.
     socks5_host: Optional[str] = None
     proxy_host: Optional[str] = None

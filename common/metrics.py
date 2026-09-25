@@ -59,6 +59,11 @@ if Counter is not None:
         "Total message processing failures (write to pending_events)",
     )
 
+    parser_messages_dedup_dropped_total = Counter(
+        "parser_messages_dedup_dropped_total",
+        "Duplicate channel messages dropped by text dedup (N4c, 30-min window)",
+    )
+
     parser_queue_size = Gauge(
         "parser_queue_size",
         "Current internal asyncio queue size (0..65)",
@@ -151,6 +156,7 @@ else:
 
     parser_messages_processed_total = _NoopCounter()
     parser_messages_errors_total = _NoopCounter()
+    parser_messages_dedup_dropped_total = _NoopCounter()
     parser_queue_size = _NoopGauge()
     parser_backpressure_active = _NoopGauge()
 

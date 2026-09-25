@@ -34,11 +34,13 @@ setup_logging(
 
 from common.db_adapter import DBAdapter
 from common.text_preprocessor import strip_tail, preprocess_light, truncate_for_geo, sanitize_text
+from parser.dedup import TextDedup
 from common.metrics import (
     parser_messages_processed_total,
     parser_messages_errors_total,
     parser_queue_size,
     parser_backpressure_active,
+    parser_messages_dedup_dropped_total,
     start_metrics_server,
 )
 
@@ -53,6 +55,11 @@ _MIN_WORKERS = 2
 _MAX_WORKERS = 8
 _SCALE_UP_QSIZE = 20
 _IDLE_TIMEOUT = 15
+
+# Окно дедупликации повторных сообщений канала (сек): повторный текст в
+# пределах окна — дубликат (N4c, events_export6/7: «Бугаевская перед
+# Дальницкая» ×3 за 11 минут, «Окружная. ОККО» ×2).
+_DEDUP_WINDOW_SECONDS = 1800.0
 
 
 class ParserBot:
@@ -88,6 +95,14 @@ class ParserBot:
         self._idle_seconds = 0
         self._backpressure_active = False
         self._download_semaphore = asyncio.Semaphore(3)
+        # Дедуп повторных текстов (N4c): одно кольцо на live-поток И историю —
+        # первичная вставка ключа происходит ровно один раз на сообщение,
+        # пересечение истории с live-потоком страхуется ON CONFLICT в БД.
+        # settings.parser.dedup_window_seconds = 0 — дедуп отключён.
+        _dedup_window = float(
+            getattr(settings.parser, 'dedup_window_seconds', _DEDUP_WINDOW_SECONDS) or 0
+        )
+        self._dedup = TextDedup(window_seconds=_dedup_window) if _dedup_window > 0 else None
 
     async def initialize(self) -> bool:
         """Инициализировать БД и Telegram клиент."""
@@ -181,14 +196,26 @@ class ParserBot:
             await self._warmup_peer()
 
             count = 0
+            skipped = 0
             async for message in self.app.get_chat_history(
                 chat_id=self.channel_id,
                 limit=settings.parser.history_limit,
             ):
+                # N4c: дедуп работает и при прогреве историей — повторные
+                # тексты из истории не создают событий (и заполняют кольцо
+                # до старта live-потока).
+                if self._dedup and self._dedup.is_duplicate(self._extract_text(message)):
+                    skipped += 1
+                    parser_messages_dedup_dropped_total.inc()
+                    continue
                 await self._pending_queue.put(message)
                 count += 1
                 if count % 50 == 0:
                     logger.debug(f"History loading progress: {count} messages")
+            if skipped:
+                logger.info(
+                    f"Chat history: {count} queued, {skipped} duplicates dropped (dedup)"
+                )
 
             logger.info(f"✅ Chat history queued: {count} messages")
         except Exception as e:
@@ -236,6 +263,15 @@ class ParserBot:
         @self.app.on_message(target_filter)
         async def handle_message(client: Client, message: Message):
             if not self._running:
+                return
+
+            # N4c: дедуп повторных текстов канала — ДО постановки в очередь.
+            # Дубликат не занимает слот очереди и не идёт в БД вообще.
+            if self._dedup and self._dedup.is_duplicate(self._extract_text(message)):
+                parser_messages_dedup_dropped_total.inc()
+                logger.info(
+                    f"Message {message.id}: duplicate text — dropped (dedup)"
+                )
                 return
 
             # put_nowait — НЕ блокируем хендлер pyrogram: при полной очереди
