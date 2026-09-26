@@ -1,19 +1,19 @@
+import os
 from dataclasses import dataclass, field
-from environs import Env
 from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-def _parse_strict_bool(env: Env, var_name: str, default: bool = True) -> bool:
+def _parse_strict_bool(var_name: str, default: bool = True) -> bool:
     """Secure by Default парсер булевых env-переменных.
 
     Возвращает default (True), если переменная не задана.
     Возвращает False ТОЛЬКО если значение явно равно 'false' или '0'
     (регистронезависимо). Во всех остальных случаях — True.
     """
-    val = env.str(var_name, default=None)
+    val = os.environ.get(var_name, None)
     if val is None:
         return default
 
@@ -75,6 +75,15 @@ DEFAULT_LAYER_KEYWORDS: dict[str, tuple] = {
         'police',
         'мусорня',
         'мусорской',
+        # Ложные леммы pymorphy: «мусоров»/«меньов» (род. падеж сленга,
+        # events_export8: «куча тцк и мусоров» → pig, «машины меньов» → pig)
+        # анализатор принимает за фамилии — словарь хранит ОБЕ взаимные леммы
+        # («мусоров»↔«мусорова», «меньов»↔«меньовы»), т.к. лемматизация
+        # фамилие-подобных слов неустойчива и зависит от формы входа.
+        'мусоров',
+        'мусорова',
+        'меньов',
+        'меньова',
         # Тип события из заголовков шаблонных пинов: «Мусоровоз» — полицейский
         # фургон (сленг), слой cops (поправка от владельца проекта).
         'мусоровоз',
@@ -180,7 +189,8 @@ class SimilarityConfig:
     max_text_length: int = 380
 
     # Порог fuzz.ratio для surface-орфо-корректора (Tier 2 в _link_span, 0-1).
-    # 0.80: пропускает слабые совпадения (0.80–0.85) — не проходят как confident.
+    # Читается из env SURFACE_TYPO_THRESHOLD (по умолчанию 0.80).
+    # 0.85: стандартный порог — пропускает слабые совпадения (0.80–0.85) — не проходят как confident.
     # Точные стем-матчи (Tier 1, score varies) не затрагивают.
     surface_typo_threshold: float = 0.80
 
@@ -311,7 +321,7 @@ class Settings:
     question_overlay: QuestionOverlayConfig = field(default_factory=QuestionOverlayConfig)
 
 
-def _resolve_postgres_password(env: Env) -> str:
+def _resolve_postgres_password() -> str:
     """Validate POSTGRES_PASSWORD with UNCONDITIONAL fail-fast on insecure values.
 
     Security requirements (M-1: раньше проверки срабатывали только при
@@ -321,10 +331,9 @@ def _resolve_postgres_password(env: Env) -> str:
     - минимальная длина 8 символов → иначе RuntimeError.
 
     По образцу _resolve_jwt_secret (R-C8): сервис не стартует с небезопасной
-    конфигурацией. docker-compose дублирует защиту на уровне оркестрации
-    (${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env} — проверяет unset/empty).
+    конфигурацией.
     """
-    password = env.str("POSTGRES_PASSWORD", None)
+    password = os.environ.get("POSTGRES_PASSWORD")
 
     if not password:
         raise RuntimeError(
@@ -359,8 +368,8 @@ def _resolve_postgres_password(env: Env) -> str:
     return password
 
 
-def _resolve_jwt_secret(env: Env) -> str:
-    secret = env.str("JWT_SECRET", None)
+def _resolve_jwt_secret() -> str:
+    secret = os.environ.get("JWT_SECRET")
     if not secret:
         raise RuntimeError("FATAL: JWT_SECRET is required in environment (R-C8).")
     insecure_defaults = {
@@ -386,22 +395,40 @@ def load_settings(env_path: Optional[str] = None, require_jwt: bool = True) -> S
     """Load settings — env читается ТОЛЬКО для credentials/per-deployment URL.
 
     Всё остальное — хардкодные дефолты в соответствующих `@dataclass`. Чтобы
-    изменить калибровку матчера / параметры БД / прокси и т.п., правится
+    изменить калибровку matcher / параметры БД / прокси и т.п., правится
     `common/settings.py` напрямую (не env).
 
     Keep-list env: BOT_TOKEN, WEBAPP_URL, REDIRECT_URL, CHANNEL_ID.
     JWT_SECRET — обязателен при require_jwt=True (R-C8).
     """
-    env = Env()
-    env.read_env(env_path)
+    def env_str(var_name: str, default: str = "") -> str:
+        return os.environ.get(var_name, default)
+
+    def env_int(var_name: str, default: int = 0) -> int:
+        val = os.environ.get(var_name)
+        if val is None:
+            return default
+        try:
+            return int(val)
+        except ValueError:
+            return default
+
+    def env_float(var_name: str, default: float = 0.80) -> float:
+        val = os.environ.get(var_name)
+        if val is None:
+            return default
+        try:
+            return float(val)
+        except ValueError:
+            return default
 
     try:
         telegram_webview_validation = _parse_strict_bool(
-            env, "TELEGRAM_WEBVIEW_VALIDATION", True
+            "TELEGRAM_WEBVIEW_VALIDATION", True
         )
-        bot_token = env.str("BOT_TOKEN", "")
+        bot_token = env_str("BOT_TOKEN", "")
         try:
-            jwt_secret = _resolve_jwt_secret(env)
+            jwt_secret = _resolve_jwt_secret()
             jwt_config = JWTConfig(secret=jwt_secret)
         except RuntimeError:
             if require_jwt:
@@ -413,26 +440,28 @@ def load_settings(env_path: Optional[str] = None, require_jwt: bool = True) -> S
                 telegram_webview_validation=telegram_webview_validation,
             ),
             db=DatabaseConfig(
-                host=env.str("POSTGRES_HOST", "postgres"),
-                port=env.int("POSTGRES_PORT", 5432),
-                user=env.str("POSTGRES_USER", "postgres"),
-                password=_resolve_postgres_password(env),
-                database=env.str("POSTGRES_DB", "postgres"),
+                host=env_str("POSTGRES_HOST", "postgres"),
+                port=env_int("POSTGRES_PORT", 5432),
+                user=env_str("POSTGRES_USER", "postgres"),
+                password=_resolve_postgres_password(),
+                database=env_str("POSTGRES_DB", "postgres"),
             ),
             bot=BotConfig(
                 token=bot_token,
-                channel_id=env.str("CHANNEL_ID", "-1002050105527"),
-                webapp_url=env.str("WEBAPP_URL", None),
-                redirect_url=env.str("REDIRECT_URL", None),
+                channel_id=env_str("CHANNEL_ID", "-1002050105527"),
+                webapp_url=env_str("WEBAPP_URL", None),
+                redirect_url=env_str("REDIRECT_URL", None),
             ),
             jwt=jwt_config,
-            similarity=SimilarityConfig(),
+            similarity=SimilarityConfig(
+                surface_typo_threshold=env_float("SURFACE_TYPO_THRESHOLD", 0.80),
+            ),
             layers=LayerConfig(),
             parser=ParserConfig(
-                socks5_host=env.str("PROXY_HOST", None),
-                proxy_port=env.int("PROXY_PORT", 1080),
-                proxy_scheme=env.str("PROXY_SCHEME", "socks5"),
-                history_limit=env.int("PARSER_HISTORY_LIMIT", 100),
+                socks5_host=env_str("PROXY_HOST", None),
+                proxy_port=env_int("PROXY_PORT", 1080),
+                proxy_scheme=env_str("PROXY_SCHEME", "socks5"),
+                history_limit=env_int("PARSER_HISTORY_LIMIT", 100),
             ),
             question_overlay=QuestionOverlayConfig(),
         )

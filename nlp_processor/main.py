@@ -43,7 +43,7 @@ from .geo_matcher import GeoMatcher
 from .health import HealthServer
 from .layer_classifier import LayerClassifier
 from .word_tokenizer import tokenize
-from common.text_preprocessor import is_promotional, truncate_for_geo
+from common.text_preprocessor import is_promotional, strip_tail, truncate_for_geo
 
 logger = logging.getLogger(__name__)
 
@@ -551,7 +551,11 @@ class NlpProcessorBot:
         """Полный цикл обработки одного сообщения: токенизация, поиск geo, вставка."""
         message_id = row['message_id']
         event_time = row['event_time']
-        raw_text = row['text'] or ''
+        # Защитная обрезка хвоста (N4b): parser режет «🌐 Открыть пин на карте»
+        # ещё на входе, но при катящемся деплое старый образ parser может
+        # успеть записать текст с хвостом — здесь идемпотентный повторный
+        # strip_tail гарантирует чистый description на фронте всегда.
+        raw_text = strip_tail(row['text'] or '')
 
         now = datetime.now(timezone.utc)
         if not (now - timedelta(minutes=60) <= event_time <= now + timedelta(minutes=5)):

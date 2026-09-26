@@ -259,6 +259,48 @@ def test_hook_fastpath_matched_address_single_candidate(matcher, monkeypatch):
     assert general_calls == []  # общий путь не понадобился
 
 
+def test_process_row_strips_pin_tail_in_description(matcher, monkeypatch):
+    """Защитная обрезка в _process_row: даже если parser записал в
+    pending_events текст С хвостом «🌐 Открыть пин на карте» (старый образ
+    при катящемся деплое), description в events уходит БЕЗ хвоста.
+
+    _process_row мокается по границе вставки: ловим description из вызова
+    _insert_event_from_candidates; гео-матч работает по-настоящему.
+    """
+    monkeypatch.setattr(_settings.geo, "structured_fastpath", True)
+    bot = _bare_bot(matcher)
+    bot.morph = matcher._morph
+    bot.layer_classifier = __import__(
+        "nlp_processor.layer_classifier", fromlist=["LayerClassifier"]
+    ).LayerClassifier(matcher._morph)
+    captured = {}
+
+    async def _capture_insert(**kwargs):
+        captured.update(kwargs)
+        return {"id": 777, "strategy": kwargs.get("strategy"), "geom": None}
+
+    bot._insert_event_from_candidates = _capture_insert
+    bot._log_quality_metrics = lambda **kw: None
+    bot._random_point = lambda: "POINT(30.7 46.4)"
+
+    pin = ("📍 Блокпост 🏠 Адрес: 69А, Бригадная улица, Чубаевка, 65021 "
+           "📝 Описание: В составе могут быть и ТЦК и полиция "
+           "🌐 Открыть пин на карте")
+    from nlp_processor.word_tokenizer import tokenize
+    from datetime import datetime, timedelta, timezone
+    row = {
+        "id": 5, "message_id": 560772,
+        "text": pin,  # КАК БУДТО parser не обрезал
+        "event_time": datetime.now(timezone.utc) - timedelta(seconds=30),
+        "photo_file_id": None,
+    }
+    _run(bot._process_row(row))
+
+    desc = captured["description"]
+    assert "Открыть пин" not in desc and "🌐" not in desc
+    assert desc.endswith("В составе могут быть и ТЦК и полиция")
+
+
 def test_hook_fastpath_fallback_on_no_match(matcher, monkeypatch):
     """Fast-path ON, адрес весь неизвестен справочнику → fallback на общий
     путь (find_geo по полному тексту) — поведение идентично старому."""
