@@ -246,7 +246,7 @@
      * Called by map-bootstrap.js poller and websocket credential wait.
      */
     async function acquireToken(): Promise<string | null> {
-        let token = getAccessToken();
+        const token = getAccessToken();
         if (token && !isTokenExpired(token)) return token;
 
         // Refresh if token exists but expired
