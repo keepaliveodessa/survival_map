@@ -43,12 +43,12 @@ window.preloadIcons = function(urls: string[]): void {
     }
 };
 
-window.createIcon = function(layer: string, properties?: Record<string, unknown>): L.Icon | L.DivIcon {
-    const opacity = getIconOpacity(properties);
-    const opacityClass = opacity < 1 ? ` icon-opacity-${Math.round(opacity * 100)}` : '';
+// Иконки всегда полностью непрозрачны в течение всего TTL события —
+// прозрачность по возрасту не применяется.
+window.createIcon = function(layer: string): L.Icon | L.DivIcon {
     if (layer === 'traffic') {
         return L.divIcon({
-            html: `<span style="font-size:22px;line-height:25px;opacity:${opacity}">⛔</span>`,
+            html: `<span style="font-size:22px;line-height:25px">⛔</span>`,
             className: 'traffic-emoji-icon',
             iconSize: [25, 25],
             iconAnchor: [12.5, 12.5],
@@ -60,13 +60,12 @@ window.createIcon = function(layer: string, properties?: Record<string, unknown>
         iconUrl: config.url,
         iconSize: config.size,
         iconAnchor: [12.5, 12.5],
-        popupAnchor: [0, -20],
-        className: opacityClass
+        popupAnchor: [0, -20]
     });
 };
 
 window.createMarker = function(_map: L.Map, latLng: L.LatLng, properties: Record<string, unknown>): L.Marker {
-    const marker = L.marker(latLng, { icon: window.createIcon(properties.layer as string, properties) });
+    const marker = L.marker(latLng, { icon: window.createIcon(properties.layer as string) });
     marker.bindPopup(window.createPopupContent(properties));
     return marker;
 };
@@ -90,17 +89,10 @@ function getGeometryColors(properties: Record<string, unknown>): { color: string
     if (ageMs == null) return { color: '#dc3545', fillColor: '#dc3545' };
     if (ageMs <= 15 * 60 * 1000) return { color: '#dc3545', fillColor: '#dc3545' };
     if (ageMs <= 30 * 60 * 1000) return { color: '#0d6efd', fillColor: '#0d6efd' };
-    return { color: '#ffffff', fillColor: '#ffffff' };
+    // Серый для 30–60 мин (бывший белый — сливался со светлым фоном карты).
+    return { color: '#9e9e9e', fillColor: '#9e9e9e' };
 }
 
-function getIconOpacity(properties?: Record<string, unknown>): number {
-    if (!properties) return 1;
-    const ageMs = parseEventAgeMs(properties);
-    if (ageMs == null) return 1;
-    if (ageMs <= 15 * 60 * 1000) return 1;
-    if (ageMs <= 30 * 60 * 1000) return 0.65;
-    return 0.3;
-}
 
 window.createCircle = function(_map: L.Map, coords: number[], properties: Record<string, unknown>, strategy?: string): L.Layer[] {
     const latLng = L.latLng(coords[1], coords[0]);
